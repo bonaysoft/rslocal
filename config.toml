@@ -1,2 +1,2 @@
-endpoint = "localhost:8422"
+endpoint = "http://localhost:8422"
 token = "abc"

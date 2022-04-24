@@ -1,12 +1,15 @@
+use std::result;
 use rslocal::client;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = config::File::with_name("config");
     let cfg = config::Config::builder().add_source(source).build();
     let ep = cfg.as_ref().unwrap().get_string("endpoint").unwrap();
     let token = cfg.as_ref().unwrap().get_string("token").unwrap();
 
-    client::run(ep, token);
+    client::run(ep, token)?;
+
+    Ok(())
 }
 
 // client <= config at HOME

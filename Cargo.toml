@@ -7,3 +7,16 @@ edition = "2021"
 
 [dependencies]
 config = "0.13.1"
+tonic = "0.7.1"
+prost = "0.10"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1.8"
+h2 = "0.3"
+chrono = "0.4.19"
+getrandom = "0.2.6"
+hyper = { version = "0.14", features = ["full"] }
+lazy_static = "1.4.0"
+
+[build-dependencies]
+tonic-build = "0.7"

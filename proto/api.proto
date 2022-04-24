@@ -1,0 +1,27 @@
+syntax = "proto3";
+package api;
+import "google/protobuf/empty.proto";
+
+service RsLocald {
+  rpc Login(LoginBody) returns (LoginReply);
+  rpc Listen(google.protobuf.Empty) returns (stream ProxyRequest);
+  rpc SendResponse (ProxyResponse) returns (google.protobuf.Empty);
+}
+
+message LoginBody {
+  string token = 1;
+}
+
+message LoginReply {
+  string endpoint = 1;
+}
+
+message ProxyRequest {
+  string reqId = 1;
+  bytes data = 2;
+}
+
+message ProxyResponse {
+  string reqId = 1;
+  bytes data = 2;
+}
