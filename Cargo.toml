@@ -17,6 +17,7 @@ chrono = "0.4.19"
 getrandom = "0.2.6"
 hyper = { version = "0.14", features = ["full"] }
 lazy_static = "1.4.0"
+parking_lot = "0.12.0"
 
 [build-dependencies]
 tonic-build = "0.7"
