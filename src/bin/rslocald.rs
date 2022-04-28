@@ -1,7 +1,13 @@
+use std::thread;
 use rslocal::server;
 
 fn main() {
-    server::run();
+    thread::spawn(|| {
+        // tx交给webserver，用来发送http请求
+        server::webserver();
+    });
+
+    server::run().unwrap();
 }
 
 // client <= config at HOME

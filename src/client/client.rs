@@ -44,7 +44,7 @@ async fn proxy_dispatch(client: &mut RsLocaldClient<Channel>) {
         println!("data: {:?}", String::from_utf8(recived.data));
 
         // todo 转发请求到本地的一个地址，并拿到Response
-        let resp = "this is resp body";
+        let resp = "HTTP/1.1 200 OK\nServer: Test\nDate:Thu, 28 Apr 2022 10:10:25 GMT";
         println!("resp: {:?}", resp);
 
         // 将Response发送会Server端

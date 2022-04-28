@@ -1,20 +1,12 @@
-use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
-use chrono::{DateTime, Utc};
 use futures::{Stream, StreamExt};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::{wrappers::ReceiverStream};
-use tonic::{transport::Server, Request, Response, Status, Streaming, IntoRequest};
+use tonic::{transport::Server, Request, Response, Status, Streaming};
 use crate::server::api::{LoginBody, LoginReply, ProxyRequest, ProxyResponse};
 use crate::server::api::rs_locald_server::{RsLocald, RsLocaldServer};
-use crate::server::{webserver, R, setup_site_host};
+use crate::server::{setup_site_host};
 
 pub mod api {
     tonic::include_proto!("api");
@@ -81,12 +73,7 @@ impl RsLocald for RSLServer {
 #[tokio::main]
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:8422".parse()?;
-    let rsl = RSLServer::new(); // rx交给grpc服务，用来接收http请求
-
-    thread::spawn(|| {
-        // tx交给webserver，用来发送http请求
-        webserver();
-    });
+    let rsl = RSLServer::new();
 
     println!("1111");
     Server::builder()
