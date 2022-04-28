@@ -21,6 +21,7 @@ chrono = "0.4.19"
 getrandom = "0.2.6"
 lazy_static = "1.4.0"
 parking_lot = "0.12.0"
+bytes = "1.1.0"
 
 [build-dependencies]
 tonic-build = "0.7"

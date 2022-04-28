@@ -2,8 +2,9 @@ pub mod api {
     tonic::include_proto!("api");
 }
 
-use tokio::sync::mpsc::{channel, Receiver};
-use tonic::{Request, Response, Status};
+use tokio::io;
+use tokio::net::{TcpSocket};
+use tokio::sync::mpsc::{channel};
 use tonic::transport::Channel;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
@@ -38,16 +39,22 @@ async fn proxy_dispatch(client: &mut RsLocaldClient<Channel>) {
         .unwrap();
 
     println!("12312");
+    let addr = "127.0.0.1:8000".parse().unwrap();
+
     let mut resp_stream = response.into_inner();
     while let Some(recived) = resp_stream.next().await {
         let recived = recived.unwrap();
-        println!("data: {:?}", String::from_utf8(recived.data));
 
-        // todo 转发请求到本地的一个地址，并拿到Response
-        let resp = "HTTP/1.1 200 OK\nServer: Test\nDate:Thu, 28 Apr 2022 10:10:25 GMT";
-        println!("resp: {:?}", resp);
+        let socket = TcpSocket::new_v4().unwrap();
+        let mut stream = socket.connect(addr).await.unwrap();
+        let mut buf = io::BufReader::new(&*recived.data);
+        io::copy(&mut buf, &mut stream).await.unwrap(); // 发送请求
+
+        let mut resp = vec![0u8; 0];
+        io::copy(&mut stream, &mut resp).await.unwrap(); //接收响应
 
         // 将Response发送会Server端
-        tx.send(ProxyResponse { req_id: recived.req_id, data: resp.as_bytes().to_vec() }).await.unwrap();
+        tx.send(ProxyResponse { req_id: recived.req_id, data: resp.to_vec() }).await.unwrap();
+        println!("resp: {:?}", String::from_utf8(resp));
     }
 }
