@@ -2,44 +2,76 @@ pub mod api {
     tonic::include_proto!("api");
 }
 
+use std::str::FromStr;
 use tokio::io;
 use tokio::net::{TcpSocket};
-use tokio::sync::mpsc::{channel};
-use tonic::transport::Channel;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tonic::transport::{Endpoint};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Streaming};
 use crate::client::api::rs_locald_client::RsLocaldClient;
 use crate::client::api::{LoginBody, ProxyRequest, ProxyResponse};
+use thiserror::Error;
 
-#[tokio::main]
-pub async fn run(endpoint: String, token: String) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", endpoint);
-    println!("{}", token);
+#[derive(Error, Debug)]
+pub enum CustomError {
+    #[error("connection disconnected")]
+    Disconnect(String),
 
-    // 根据域名和Token连接服务器
-    let mut client = RsLocaldClient::connect(endpoint).await?;
+    #[error("{0}")]
+    Message(String),
 
-    // let req = Request::new(LoginBody { token: "abc".to_string() });
-    // client.login(req).await.unwrap();
-
-    proxy_dispatch(&mut client).await;
-
-    Ok(())
-
-    // 服务器会返回域名，将域名显示出来
+    #[error("unknown error")]
+    Unknown,
 }
 
-async fn proxy_dispatch(client: &mut RsLocaldClient<Channel>) {
-    let (tx, rx) = channel(128);
+impl From<tonic::Status> for CustomError {
+    fn from(err: tonic::Status) -> Self {
+        CustomError::Message(format!("{}", err.message()))
+    }
+}
+
+impl From<tonic::transport::Error> for CustomError {
+    fn from(err: tonic::transport::Error) -> Self {
+        CustomError::Disconnect(format!("{}", err.to_string()))
+    }
+}
+
+#[tokio::main]
+pub async fn run(endpoint: String, token: String, target: String, subdomain: String) -> Result<(), CustomError> {
+    // println!("{}", token);
+    // println!("{}", endpoint);
+
+    // 根据域名和Token连接服务器
+    // 第一次连接进行登录，获取session_token和endpoint
+    let mut client = RsLocaldClient::connect(endpoint.clone()).await?;
+    let req = Request::new(LoginBody { token: "abc".to_string(), subdomain });
+    let login_service = client.login(req).await?;
+    let lr = login_service.into_inner();
+    println!("{} => {}", lr.endpoint, target);
+
+    // 第二次连接，开始监听
+    let ep = Endpoint::from_str(endpoint.as_str())?;
+    let channel = ep.connect().await?;
+    let mut client = RsLocaldClient::with_interceptor(channel, move |mut req: Request<()>| {
+        req.metadata_mut().insert("session_id", lr.session_id.parse().unwrap());
+        Ok(req)
+    });
+
+    // 开始监听
+    let (tx, rx) = mpsc::channel(128);
     let rs = ReceiverStream::new(rx);
+    let response = client.listen(rs).await?;
+    proxy_dispatch(response, tx, target).await;
 
-    let response = client
-        .listen(rs)
-        .await
-        .unwrap();
+    Ok(())
+}
 
-    println!("12312");
-    let addr = "127.0.0.1:8000".parse().unwrap();
+async fn proxy_dispatch(response: Response<Streaming<ProxyRequest>>, tx: Sender<ProxyResponse>, target: String) {
+    println!("proxy_dispatch");
+    let addr = target.parse().unwrap();
 
     let mut resp_stream = response.into_inner();
     while let Some(recived) = resp_stream.next().await {

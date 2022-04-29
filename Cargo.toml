@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = { version = "3.1.8", features = ["derive"] }
 config = "0.13.1"
 tonic = "0.7.1"
 prost = "0.10"
@@ -22,6 +23,9 @@ getrandom = "0.2.6"
 lazy_static = "1.4.0"
 parking_lot = "0.12.0"
 bytes = "1.1.0"
+rand = "0.8.5"
+anyhow = { version = "1.0.56", features = ["backtrace"] }
+thiserror = { version = "1.0.30" }
 
 [build-dependencies]
 tonic-build = "0.7"

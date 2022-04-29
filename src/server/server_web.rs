@@ -32,12 +32,25 @@ lazy_static! {
     pub static ref VHOST: Mutex<HashMap<String, Sender<R>>> = Mutex::new(HashMap::new());
 }
 
-pub fn get_site_host(host: String) -> Sender<R> {
-    VHOST.lock().unwrap().get(host.as_str()).unwrap().clone()
+pub fn get_site_host(host: String) -> Option<Sender<R>> {
+    if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
+        Some(site.clone())
+    } else {
+        None
+    }
 }
 
-pub fn setup_site_host(host: String, otx: Sender<R>) {
+pub fn setup_site_host(host: String, otx: Sender<R>) -> bool {
+    if get_site_host(host.clone()).is_some() {
+        return false;
+    }
+
     VHOST.lock().unwrap().insert(host, otx);
+    return true;
+}
+
+pub fn remove_site_host(host: String) {
+    VHOST.lock().unwrap().remove(host.as_str());
 }
 
 
@@ -56,9 +69,6 @@ pub async fn webserver() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn process(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
-    // 获取发送Request的Sender
-    let tx = get_site_host("host".to_string());
-
     // 准备接收Response用的channel
     let (otx, orx) = mpsc::channel();
 
@@ -79,12 +89,31 @@ async fn process(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
             Ok(n) => {
                 println!("read {} bytes", n);
 
+                let mut req = ProxyRequest { req_id: "".to_string(), data: buf.to_vec() };
                 if n <= 1024 {
                     // todo 设置结束标志位，跳出循环
+                    req.req_id = "-1".to_string();
                 }
 
-                let warp_req: R = R { otx: otx.clone(), req: ProxyRequest { req_id: "-1".to_string(), data: buf.to_vec() } };
-                tx.send(warp_req).await.unwrap();
+                // todo 判断是否为http请求，如果是解析buf获取host
+                let mut headers = [httparse::EMPTY_HEADER; 64];
+                httparse::Request::new(&mut headers).parse(&*buf).unwrap();
+                let mut host: String = "".to_string();
+                for x in headers {
+                    if x.name == "Host" {
+                        host = String::from_utf8(x.value.clone().to_vec()).unwrap()
+                    }
+                }
+
+                let warp_req: R = R { otx: otx.clone(), req: req };
+                // 获取发送Request的Sender
+                let tx = get_site_host(host);
+                if tx.is_none() {
+                    stream.write("HTTP/1.1 404 Not Found\nServer: Rslocal\n".as_bytes()).await.unwrap();
+                    return Ok(());
+                }
+
+                tx.unwrap().send(warp_req).await.unwrap();
                 if n <= 1024 {
                     break;
                 }

@@ -9,10 +9,12 @@ service RsLocald {
 
 message LoginBody {
   string token = 1;
+  string subdomain = 2;
 }
 
 message LoginReply {
-  string endpoint = 1;
+  string session_id = 1;
+  string endpoint = 2;
 }
 
 message ProxyRequest {
