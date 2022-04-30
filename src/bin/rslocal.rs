@@ -1,11 +1,8 @@
 use std::error::Error;
-use std::fmt;
+use anyhow::anyhow;
 use rslocal::client;
-use clap::{Args, Parser, Subcommand};
-use futures::task::Spawn;
-use tonic::codegen::Body;
-use tonic::Status;
-use rslocal::client::CustomError;
+use clap::{Parser, Subcommand};
+use rslocal::client::{ClientError};
 
 /// A fictional versioning CLI
 #[derive(Debug, Parser)]
@@ -38,19 +35,24 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let args = Cli::parse();
-    println!("{:?}", args.config);
-
     match args.command {
         Commands::HTTP { port, subdomain } => {
-            println!("expose the port {}", port);
             let source = config::File::with_name(&args.config);
             let cfg = config::Config::builder().add_source(source).build();
             let ep = cfg.as_ref().unwrap().get_string("endpoint").unwrap();
             let token = cfg.as_ref().unwrap().get_string("token").unwrap();
 
-            client::run(ep, token, format!("127.0.0.1:{}", port), subdomain.unwrap_or_default())?;
+            if let Err(err) = client::run(ep, token, format!("127.0.0.1:{}", port), subdomain.unwrap_or_default()).await {
+                return match err {
+                    ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
+                    ClientError::Status(status) => { Err(anyhow!("{}", status.message())) }
+                    ClientError::Other(err) => { Err(err) }
+                };
+            }
         }
         Commands::TCP { port } => {
             println!("expose the port {}", port);
@@ -59,9 +61,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// client <= config at HOME
-// server <= flag and env
-
-// client连接server，输出服务端域名地址
-// server接收外部请求，将请求转发给client

@@ -2,6 +2,7 @@ use std::thread;
 use rslocal::server;
 
 fn main() {
+    env_logger::init();
     thread::spawn(|| {
         // tx交给webserver，用来发送http请求
         server::webserver();

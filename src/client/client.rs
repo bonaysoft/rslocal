@@ -3,6 +3,7 @@ pub mod api {
 }
 
 use std::str::FromStr;
+use log::info;
 use tokio::io;
 use tokio::net::{TcpSocket};
 use tokio::sync::mpsc;
@@ -16,45 +17,32 @@ use crate::client::api::{LoginBody, ProxyRequest, ProxyResponse};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum CustomError {
-    #[error("connection disconnected")]
-    Disconnect(String),
+pub enum ClientError {
+    #[error(transparent)]
+    Connect(#[from] tonic::transport::Error),
 
     #[error("{0}")]
-    Message(String),
+    Status(#[from] tonic::Status),
 
-    #[error("unknown error")]
-    Unknown,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
-impl From<tonic::Status> for CustomError {
-    fn from(err: tonic::Status) -> Self {
-        CustomError::Message(format!("{}", err.message()))
-    }
-}
-
-impl From<tonic::transport::Error> for CustomError {
-    fn from(err: tonic::transport::Error) -> Self {
-        CustomError::Disconnect(format!("{}", err.to_string()))
-    }
-}
-
-#[tokio::main]
-pub async fn run(endpoint: String, token: String, target: String, subdomain: String) -> Result<(), CustomError> {
+pub async fn run(endpoint: String, token: String, target: String, subdomain: String) -> Result<(), ClientError> {
     // println!("{}", token);
     // println!("{}", endpoint);
 
-    // 根据域名和Token连接服务器
-    // 第一次连接进行登录，获取session_token和endpoint
-    let mut client = RsLocaldClient::connect(endpoint.clone()).await?;
-    let req = Request::new(LoginBody { token: "abc".to_string(), subdomain });
-    let login_service = client.login(req).await?;
-    let lr = login_service.into_inner();
-    println!("{} => {}", lr.endpoint, target);
-
-    // 第二次连接，开始监听
+    // 连接服务器
     let ep = Endpoint::from_str(endpoint.as_str())?;
     let channel = ep.connect().await?;
+
+    // 登录逻辑，使用Token连接服务器获取session_id
+    let req = Request::new(LoginBody { token: "abc".to_string(), subdomain });
+    let login_service = RsLocaldClient::new(channel.clone()).login(req).await?;
+    let lr = login_service.into_inner();
+    println!("Forwarding: {} => {}", lr.endpoint, target);
+
+    // 注入session_id
     let mut client = RsLocaldClient::with_interceptor(channel, move |mut req: Request<()>| {
         req.metadata_mut().insert("session_id", lr.session_id.parse().unwrap());
         Ok(req)
@@ -70,23 +58,42 @@ pub async fn run(endpoint: String, token: String, target: String, subdomain: Str
 }
 
 async fn proxy_dispatch(response: Response<Streaming<ProxyRequest>>, tx: Sender<ProxyResponse>, target: String) {
-    println!("proxy_dispatch");
     let addr = target.parse().unwrap();
 
     let mut resp_stream = response.into_inner();
-    while let Some(recived) = resp_stream.next().await {
-        let recived = recived.unwrap();
+    while let Some(resp_stream_result) = resp_stream.next().await {
+        let proxy_request = resp_stream_result.unwrap(); //todo 处理连接断开的情况
+        let proxy_request_id = proxy_request.req_id;
+        let proxy_request_data = proxy_request.data.as_slice();
 
+        // 建立连接
+        // todo 复用连接
         let socket = TcpSocket::new_v4().unwrap();
         let mut stream = socket.connect(addr).await.unwrap();
-        let mut buf = io::BufReader::new(&*recived.data);
-        io::copy(&mut buf, &mut stream).await.unwrap(); // 发送请求
-
+        let mut req_buf = io::BufReader::new(proxy_request_data);
+        // 发送请求
+        io::copy(&mut req_buf, &mut stream).await.unwrap();
+        // 接收响应
         let mut resp = vec![0u8; 0];
-        io::copy(&mut stream, &mut resp).await.unwrap(); //接收响应
-
+        io::copy(&mut stream, &mut resp).await.unwrap();
+        let resp_length = resp.len();
         // 将Response发送会Server端
-        tx.send(ProxyResponse { req_id: recived.req_id, data: resp.to_vec() }).await.unwrap();
-        println!("resp: {:?}", String::from_utf8(resp));
+        tx.send(ProxyResponse { req_id: proxy_request_id, data: resp.to_vec() }).await.unwrap();
+
+        // todo 这里每一次执行可能是同一个Request，需要进行判定，在第一次执行是解析
+        // 解析http请求
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut req = httparse::Request::new(&mut headers);
+        req.parse(proxy_request_data).unwrap();
+
+        // 解析http响应
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut parsed_resp = httparse::Response::new(&mut headers);
+        parsed_resp.parse(resp.as_slice()).unwrap();
+
+        // 输出访问日志
+        // todo 支持tcp日志
+        info!("\"{} {} HTTP/1.{}\" {} {} {}", req.method.unwrap().to_string(), req.path.unwrap(), req.version.unwrap(),
+            parsed_resp.code.unwrap(), parsed_resp.reason.unwrap(), resp_length);
     }
 }

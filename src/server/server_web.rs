@@ -1,11 +1,15 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{mpsc, Mutex};
+use std::sync::Mutex;
+use anyhow::anyhow;
 use lazy_static::lazy_static;
-use tokio::io;
+use log::info;
+use tokio::{io, sync};
+use tokio::sync::{mpsc, oneshot};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{Sender};
+// use tokio::sync::mpsc::{Sender};
 use crate::client::api::ProxyRequest;
 use crate::server::api::ProxyResponse;
 
@@ -29,10 +33,10 @@ pub struct R {
 // }
 
 lazy_static! {
-    pub static ref VHOST: Mutex<HashMap<String, Sender<R>>> = Mutex::new(HashMap::new());
+    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<R>>> = Mutex::new(HashMap::new());
 }
 
-pub fn get_site_host(host: String) -> Option<Sender<R>> {
+pub fn get_site_host(host: String) -> Option<mpsc::Sender<R>> {
     if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
         Some(site.clone())
     } else {
@@ -40,7 +44,7 @@ pub fn get_site_host(host: String) -> Option<Sender<R>> {
     }
 }
 
-pub fn setup_site_host(host: String, otx: Sender<R>) -> bool {
+pub fn setup_site_host(host: String, otx: mpsc::Sender<R>) -> bool {
     if get_site_host(host.clone()).is_some() {
         return false;
     }
@@ -61,6 +65,7 @@ pub async fn webserver() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
+            println!("processing stream from: {:?}", stream.peer_addr());
             if let Err(e) = process(stream).await {
                 println!("failed to process connection; error = {}", e);
             }
@@ -68,11 +73,33 @@ pub async fn webserver() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn process(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
+async fn process(mut stream: TcpStream) -> anyhow::Result<()> {
     // 准备接收Response用的channel
-    let (otx, orx) = mpsc::channel();
+    let (otx, mut orx) = mpsc::channel(128);
 
     // 接收Request并使用tx发送给客户端
+    stream_handler(&mut stream, otx).await.unwrap();
+
+    // 接收client发回的数据并Response
+    loop {
+        let x = orx.recv().await;
+        if let Some(pr) = x {
+            stream.write_all(&pr.data).await.unwrap();
+            if pr.req_id == "-1" {
+                break;
+            }
+        } else {
+            return Err(anyhow!("otx closed"));
+        }
+    }
+
+    // todo 完善访问日志，可能需要先重构这里的代码
+    info!("{}", stream.peer_addr().unwrap());
+
+    Ok(())
+}
+
+async fn stream_handler(stream: &mut TcpStream, otx: mpsc::Sender<ProxyResponse>) -> anyhow::Result<()> {
     loop {
         // Wait for the socket to be readable
         stream.readable().await?;
@@ -126,15 +153,6 @@ async fn process(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 return Err(e.into());
             }
         }
-    }
-
-    // 接收client发回的数据并Response
-    for x in orx {
-        stream.write(&x.data).await.unwrap();
-        if x.req_id == "-1" {
-            break;
-        }
-        println!("{:?}", String::from_utf8(x.data));
     }
 
     Ok(())

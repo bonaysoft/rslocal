@@ -98,7 +98,7 @@ impl RsLocald for RSLServer {
             }
 
             while let Some(msg) = orx.recv().await {
-                println!("got {:?}", msg); // 接收来自入口的请求
+                // println!("got {:?}", msg.req.data.len()); // 接收来自入口的请求
 
                 // 发送给目标服务
                 tx.send(Result::Ok(ProxyRequest { req_id: msg.req.req_id, data: msg.req.data })).await.unwrap();
@@ -106,7 +106,7 @@ impl RsLocald for RSLServer {
                 // 等待目标服务响应
                 let response = irx.recv().await;
                 // let response = resp_stream.next().await;
-                msg.otx.send(response.unwrap().unwrap()).unwrap();
+                msg.otx.send(response.unwrap().unwrap()).await.unwrap();
             }
             println!("orx exit");
         });
