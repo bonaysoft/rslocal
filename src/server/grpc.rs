@@ -12,7 +12,7 @@ use tokio_stream::{wrappers::ReceiverStream};
 use tonic::{transport::Server, Request, Response, Status, Streaming};
 use crate::server::api::{LoginBody, LoginReply, ProxyRequest, ProxyResponse};
 use crate::server::api::rs_locald_server::{RsLocald, RsLocaldServer};
-use crate::server::{Config, get_site_host, remove_site_host, setup_site_host};
+use crate::server::{Config, get_site_host, remove_site_host, setup_site_host, web};
 use crate::server::config::Core;
 
 pub mod api {
@@ -128,9 +128,9 @@ impl RsLocald for RSLServer {
                 tx.send(Result::Ok(ProxyRequest { req_id: msg.req.req_id, data: msg.req.data })).await.unwrap();
 
                 // 等待目标服务响应
-                let response = irx.recv().await;
-                // let response = resp_stream.next().await;
-                msg.otx.send(response.unwrap().unwrap()).await.unwrap();
+                let response = irx.recv().await.unwrap().unwrap();
+                msg.header_tx.send(response.header).await.unwrap();
+                msg.body_tx.send(Ok(response.data)).await.unwrap();
             }
             println!("orx exit");
         });

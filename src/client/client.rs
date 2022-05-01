@@ -78,8 +78,14 @@ async fn proxy_dispatch(response: Response<Streaming<ProxyRequest>>, tx: Sender<
         let mut resp = vec![0u8; 0];
         io::copy(&mut stream, &mut resp).await.unwrap();
         let resp_length = resp.len();
+
+        // 分割header和body，方便服务端处理
+        let split_idx = String::from_utf8_lossy(resp.as_slice()).find("\r\n\r\n").unwrap();
+        let header = resp[..split_idx].to_owned();
+        let data = resp[split_idx + 4..].to_owned();
+
         // 将Response发送会Server端
-        tx.send(ProxyResponse { req_id: proxy_request_id, data: resp.to_vec() }).await.unwrap();
+        tx.send(ProxyResponse { req_id: proxy_request_id, header, data }).await.unwrap();
 
         // todo 这里每一次执行可能是同一个Request，需要进行判定，在第一次执行是解析
         // 解析http请求

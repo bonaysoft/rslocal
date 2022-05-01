@@ -6,7 +6,7 @@ fn main() {
 
     // webServer
     thread::spawn(|| {
-        server::webserver().unwrap();
+        server::http_serve();
     });
 
     // grpcServer

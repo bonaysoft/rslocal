@@ -30,6 +30,8 @@ anyhow = { version = "1.0.56", features = ["backtrace"] }
 thiserror = { version = "1.0.30" }
 log = "0.4.16"
 env_logger = "0.9.0"
+hyper = "0.14.18"
+futures-util = "0.3.21"
 
 [build-dependencies]
 tonic-build = "0.7"

@@ -26,4 +26,5 @@ message ProxyRequest {
 message ProxyResponse {
   string reqId = 1;
   bytes data = 2;
+  bytes header = 3;
 }
