@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.1.8", features = ["derive"] }
 config = "0.13.1"
+serde = "1.0.136"
+serde_derive = "1.0.136"
 tonic = "0.7.1"
 prost = "0.10"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }

@@ -13,8 +13,9 @@ message LoginBody {
 }
 
 message LoginReply {
-  string session_id = 1;
-  string endpoint = 2;
+  string endpoint = 1;
+  string session_id = 2;
+  string username = 3;
 }
 
 message ProxyRequest {

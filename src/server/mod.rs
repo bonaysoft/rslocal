@@ -1,5 +1,7 @@
-mod server_grpc;
-mod server_web;
+mod grpc;
+mod web;
+mod config;
 
-pub use server_grpc::*;
-pub use server_web::*;
+pub use self::config::Config;
+pub use self::grpc::*;
+pub use self::web::*;

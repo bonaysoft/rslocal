@@ -37,9 +37,10 @@ pub async fn run(endpoint: String, token: String, target: String, subdomain: Str
     let channel = ep.connect().await?;
 
     // 登录逻辑，使用Token连接服务器获取session_id
-    let req = Request::new(LoginBody { token: "abc".to_string(), subdomain });
+    let req = Request::new(LoginBody { token, subdomain });
     let login_service = RsLocaldClient::new(channel.clone()).login(req).await?;
     let lr = login_service.into_inner();
+    println!("Username: {}", lr.username);
     println!("Forwarding: {} => {}", lr.endpoint, target);
 
     // 注入session_id

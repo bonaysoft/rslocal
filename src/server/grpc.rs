@@ -1,6 +1,7 @@
 use std::pin::Pin;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use anyhow::anyhow;
 
 use futures::{Stream, StreamExt};
 use lazy_static::lazy_static;
@@ -11,18 +12,40 @@ use tokio_stream::{wrappers::ReceiverStream};
 use tonic::{transport::Server, Request, Response, Status, Streaming};
 use crate::server::api::{LoginBody, LoginReply, ProxyRequest, ProxyResponse};
 use crate::server::api::rs_locald_server::{RsLocald, RsLocaldServer};
-use crate::server::{get_site_host, remove_site_host, setup_site_host};
+use crate::server::{Config, get_site_host, remove_site_host, setup_site_host};
+use crate::server::config::Core;
 
 pub mod api {
     tonic::include_proto!("api");
 }
 
 #[derive(Debug)]
-pub struct RSLServer {}
+pub struct RSLServer {
+    cfg: Config,
+}
+
+const AUTH_METHOD_TOKEN: &str = "token";
+const AUTH_METHOD_OIDC: &str = "oidc";
 
 impl RSLServer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(cfg: Config) -> Self {
+        Self { cfg }
+    }
+
+    fn token2username(&self, token: String) -> Result<String, Status> {
+        let cfg = self.cfg.clone();
+        if cfg.core.auth_method == AUTH_METHOD_OIDC.to_string() {
+            // todo implement oidc auth
+            return Err(Status::invalid_argument("oidc not implement"));
+        }
+
+        for (k, v) in cfg.tokens {
+            if v == token {
+                return Ok(k);
+            }
+        };
+
+        Err(Status::invalid_argument("invalid token"))
     }
 }
 
@@ -35,25 +58,26 @@ impl RsLocald for RSLServer {
     async fn login(&self, mut request: Request<LoginBody>) -> Result<Response<LoginReply>, Status> {
         let param = request.into_inner();
         let token = param.token;
+
+        // 验证token是否正确并获取用户名
+        let username = self.token2username(token)?;
+        println!("{}", username);
+
+        // 如果没有指定子域名则随机生成一个
         let mut subdomain = param.subdomain;
-
-        println!("{:?}", token);
-        // todo 验证token是否正确
-        // todo 根据token获取用户名
-
         if subdomain.is_empty() {
             subdomain = random_string(8);
         }
 
-        let domain = "localtest.me:8080"; // todo 从配置文件获取根域名
-        let vhost = format!("{}.{}", subdomain, domain).to_lowercase();
+        let vhost = format!("{}.{}", subdomain, self.cfg.http.default_domain).to_lowercase();
         let session_id: String = random_string(128);
         println!("{:?}", session_id);
 
         // 存储 token => vhost 对应关系, 在listen里需要获取vhost
         SESSIONS.lock().unwrap().insert(session_id.clone(), vhost.clone());
         Ok(Response::new(LoginReply {
-            session_id: session_id.to_string(),
+            session_id,
+            username,
             endpoint: format!("http://{}/", vhost).to_string(),
         }))
     }
@@ -119,11 +143,11 @@ impl RsLocald for RSLServer {
 }
 
 #[tokio::main]
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:8422".parse()?;
-    let rsl = RSLServer::new();
+pub async fn grpc_serve() -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = Config::new().unwrap();
+    let addr = cfg.core.bind_addr.parse()?;
+    let rsl = RSLServer::new(cfg);
 
-    println!("1111");
     Server::builder()
         .add_service(RsLocaldServer::new(rsl))
         .serve(addr)

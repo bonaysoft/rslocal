@@ -13,7 +13,7 @@ struct Cli {
     command: Commands,
 
     /// config file of rslocal
-    #[clap(short, long, default_value_t = String::from("config"))]
+    #[clap(short, long, default_value_t = String::from("rslocal"))]
     config: String,
 }
 

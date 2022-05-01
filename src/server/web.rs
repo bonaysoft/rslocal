@@ -1,6 +1,4 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::error::Error;
 use std::sync::Mutex;
 use anyhow::anyhow;
 use lazy_static::lazy_static;
@@ -9,28 +7,15 @@ use tokio::{io, sync};
 use tokio::sync::{mpsc, oneshot};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-// use tokio::sync::mpsc::{Sender};
 use crate::client::api::ProxyRequest;
 use crate::server::api::ProxyResponse;
+use crate::server::Config;
 
 #[derive(Debug)]
 pub struct R {
     pub otx: mpsc::Sender<ProxyResponse>,
     pub req: ProxyRequest,
 }
-
-// async fn dispatch(req: Vec<u8>) -> Vec<u8> {
-//     // 获取input_tx
-//     let tx = get_site_host("host".to_string());
-//
-//     // 发送数据
-//     let (otx, orx) = oneshot::channel();
-//     let warp_req: R = R { otx, req: ProxyRequest { req_id: "".to_string(), data: req } };
-//     tx.send(warp_req).await.unwrap();
-//
-//     let resp = orx.await.unwrap();
-//     resp.data
-// }
 
 lazy_static! {
     pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<R>>> = Mutex::new(HashMap::new());
@@ -60,7 +45,8 @@ pub fn remove_site_host(host: String) {
 
 #[tokio::main]
 pub async fn webserver() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
+    let cfg = Config::new().unwrap();
+    let listener = TcpListener::bind(cfg.http.bind_addr).await?;
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -100,6 +86,7 @@ async fn process(mut stream: TcpStream) -> anyhow::Result<()> {
 }
 
 async fn stream_handler(stream: &mut TcpStream, otx: mpsc::Sender<ProxyResponse>) -> anyhow::Result<()> {
+    println!("stream_handler");
     loop {
         // Wait for the socket to be readable
         stream.readable().await?;
