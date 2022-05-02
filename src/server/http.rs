@@ -1,24 +1,21 @@
 use std::convert::Infallible;
+use std::time::Duration;
 use http::{HeaderValue, Request, Response, StatusCode};
 use http::header::HeaderName;
 use hyper::{Body, Client, Server};
 use hyper::service::{make_service_fn, service_fn};
-use log::info;
+use log::{debug, info};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::time::{sleep};
 use tokio_stream::wrappers::ReceiverStream;
-use crate::client::api::ProxyRequest;
+use tonic::Status;
+use crate::server::grpc::api::ProxyRequest;
 use crate::random_string;
-use crate::server::{Config, get_site_host, R, rr_set};
+use crate::server::{Config, get_site_host, R, REQS, rr_set};
 
 static NOTFOUND: &[u8] = b"Not Found";
-
-fn uppercase_first_letter(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
 
 fn not_found() -> Response<Body> {
     Response::builder()
@@ -42,40 +39,59 @@ async fn proxy(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     }
     buf.push_str("\r\n");
     // todo 准备Body数据
-    // req.into_body();
+    let whole_body = hyper::body::to_bytes(req.into_body()).await?;
 
     // 发送给client
     let (htx, mut hrx) = mpsc::channel(128);
     let (btx, brx) = mpsc::channel(128);
-
     let req_id = random_string(64);
-    info!("req_id: {}, uri: {}",req_id, req.uri());
     rr_set(req_id.clone(), R { header_tx: htx, body_tx: btx });
-    println!("start send");
-    tx.unwrap().send(ProxyRequest { req_id, data: buf.into_bytes() }).await.unwrap();
-    println!("send done");
+    // debug!("req_id: {}, uri: {}",req_id, req.uri());
+
+    debug!("start notify");
+    tx.unwrap().send(req_id.clone()).await.unwrap();
+
+    // wait client fetch
+    let fetch_tx = wait_fetch(req_id.clone()).await;
+
+    debug!("start send ProxyRequest");
+    let mut data = buf.into_bytes();
+    data.write_all(whole_body.as_ref()).await.unwrap(); // todo 改成流式发送
+    fetch_tx.send(Ok(ProxyRequest { req_id, data })).await.unwrap();
+    debug!("send done");
 
     // 解析Headers
     let header = hrx.recv().await.unwrap();
-    println!("raw_headers:{:?}", String::from_utf8_lossy(header.clone().as_slice()));
+    debug!("raw_headers:{:?}", String::from_utf8_lossy(header.clone().as_slice()));
     let mut headers = [httparse::EMPTY_HEADER; 64];
-    httparse::Response::new(&mut headers).parse(header.as_slice()).unwrap();
-    println!("raw_headers:{:?}", headers);
+    let mut resp = httparse::Response::new(&mut headers);
+    resp.parse(header.as_slice()).unwrap();
 
     // 接收Body响应并返回
-    let mut builder = Response::builder();
+    let mut builder = Response::builder().status(resp.code.unwrap());
     let header_map = builder.headers_mut().unwrap();
     for h in headers.iter().clone() {
         // println!("h:{:?}", h);
-        if h.name.is_empty() { continue; }
+        if h.name.is_empty() {
+            continue;
+        }
 
         header_map.insert(HeaderName::try_from(h.name).unwrap(), HeaderValue::try_from(h.value).unwrap());
     }
-    println!("header:{:?}", header_map);
-
+    debug!("header:{:?}", header_map);
     let stream = ReceiverStream::new(brx);
     let body = builder.body(Body::wrap_stream(stream));
     Ok(body.unwrap())
+}
+
+async fn wait_fetch(id: String) -> Sender<Result<ProxyRequest, Status>> {
+    loop {
+        if let Some(tx) = REQS.lock().unwrap().get(id.as_str()) {
+            return tx.clone();
+        }
+
+        sleep(Duration::from_micros(100)).await;
+    }
 }
 
 #[tokio::main]

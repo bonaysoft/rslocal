@@ -1,25 +1,22 @@
 use std::collections::HashMap;
-use std::fmt::Error;
 use std::sync::Mutex;
-use anyhow::anyhow;
 use lazy_static::lazy_static;
-use log::info;
-use tokio::{io, sync};
-use tokio::sync::{mpsc, oneshot};
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
-use crate::client::api::ProxyRequest;
-use crate::server::Config;
+use tokio::{sync};
+use tokio::sync::{mpsc};
+use tokio::net::{TcpStream};
+use tonic::Status;
+use crate::server::{grpc};
 
 #[derive(Debug, Clone)]
 pub struct R {
     pub header_tx: mpsc::Sender<Vec<u8>>,
-    pub body_tx: mpsc::Sender<Result<Vec<u8>, Error>>,
+    pub body_tx: mpsc::Sender<Result<Vec<u8>, Status>>,
 }
 
 lazy_static! {
-    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<ProxyRequest>>> = Mutex::new(HashMap::new());
+    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<String>>> = Mutex::new(HashMap::new());
     pub static ref RR: Mutex<HashMap<String, R>> = Mutex::new(HashMap::new());
+    pub static ref REQS: Mutex<HashMap<String, mpsc::Sender<Result<grpc::api::ProxyRequest,Status>>>> = Mutex::new(HashMap::new());
 }
 
 pub fn rr_get(rid: String) -> Option<R> {
@@ -39,7 +36,7 @@ pub fn rr_set(rid: String, r: R) -> bool {
     return true;
 }
 
-pub fn get_site_host(host: String) -> Option<mpsc::Sender<ProxyRequest>> {
+pub fn get_site_host(host: String) -> Option<mpsc::Sender<String>> {
     if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
         Some(site.clone())
     } else {
@@ -47,7 +44,7 @@ pub fn get_site_host(host: String) -> Option<mpsc::Sender<ProxyRequest>> {
     }
 }
 
-pub fn setup_site_host(host: String, otx: mpsc::Sender<ProxyRequest>) -> bool {
+pub fn setup_site_host(host: String, otx: mpsc::Sender<String>) -> bool {
     if get_site_host(host.clone()).is_some() {
         return false;
     }

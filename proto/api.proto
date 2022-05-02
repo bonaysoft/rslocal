@@ -4,7 +4,13 @@ import "google/protobuf/empty.proto";
 
 service RsLocald {
   rpc Login(LoginBody) returns (LoginReply);
-  rpc Listen(stream ProxyResponse) returns (stream ProxyRequest);
+  rpc Listen(google.protobuf.Empty) returns (stream RequestEntry);
+  rpc FetchRequest(RequestEntry) returns (stream ProxyRequest);
+  rpc PublishResponse(stream ProxyResponse) returns (google.protobuf.Empty);
+}
+
+message RequestEntry{
+  string id = 1;
 }
 
 message LoginBody {
