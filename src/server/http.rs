@@ -1,15 +1,14 @@
-use std::borrow::Borrow;
 use std::convert::Infallible;
-use futures_util::StreamExt;
-use http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
+use http::{HeaderValue, Request, Response, StatusCode};
 use http::header::HeaderName;
 use hyper::{Body, Client, Server};
 use hyper::service::{make_service_fn, service_fn};
-use tokio::io::AsyncWriteExt;
+use log::info;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use crate::client::api::ProxyRequest;
-use crate::server::{Config, get_site_host, R};
+use crate::random_string;
+use crate::server::{Config, get_site_host, R, rr_set};
 
 static NOTFOUND: &[u8] = b"Not Found";
 
@@ -39,31 +38,41 @@ async fn proxy(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     // 准备Request数据
     let mut buf = format!("{} {} {:?}\r\n", req.method(), req.uri(), req.version());
     for (name, val) in req.headers() {
-        buf.push_str(&format!("{}: {}\r\n", uppercase_first_letter(name.as_str()), val.to_str().unwrap()));
+        buf.push_str(&format!("{}: {}\r\n", name.as_str(), val.to_str().unwrap()));
     }
     buf.push_str("\r\n");
     // todo 准备Body数据
+    // req.into_body();
 
     // 发送给client
     let (htx, mut hrx) = mpsc::channel(128);
     let (btx, brx) = mpsc::channel(128);
-    let warp_req: R = R { header_tx: htx, body_tx: btx, req: ProxyRequest { req_id: "".to_string(), data: buf.into_bytes() } };
-    tx.unwrap().send(warp_req).await.unwrap();
+
+    let req_id = random_string(64);
+    info!("req_id: {}, uri: {}",req_id, req.uri());
+    rr_set(req_id.clone(), R { header_tx: htx, body_tx: btx });
+    println!("start send");
+    tx.unwrap().send(ProxyRequest { req_id, data: buf.into_bytes() }).await.unwrap();
+    println!("send done");
 
     // 解析Headers
     let header = hrx.recv().await.unwrap();
+    println!("raw_headers:{:?}", String::from_utf8_lossy(header.clone().as_slice()));
     let mut headers = [httparse::EMPTY_HEADER; 64];
     httparse::Response::new(&mut headers).parse(header.as_slice()).unwrap();
+    println!("raw_headers:{:?}", headers);
 
     // 接收Body响应并返回
     let mut builder = Response::builder();
     let header_map = builder.headers_mut().unwrap();
     for h in headers.iter().clone() {
+        // println!("h:{:?}", h);
         if h.name.is_empty() { continue; }
+
         header_map.insert(HeaderName::try_from(h.name).unwrap(), HeaderValue::try_from(h.value).unwrap());
     }
+    println!("header:{:?}", header_map);
 
-    println!("{:?}", header_map);
     let stream = ReceiverStream::new(brx);
     let body = builder.body(Body::wrap_stream(stream));
     Ok(body.unwrap())

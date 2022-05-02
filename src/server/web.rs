@@ -11,18 +11,35 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::client::api::ProxyRequest;
 use crate::server::Config;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct R {
-    pub req: ProxyRequest,
     pub header_tx: mpsc::Sender<Vec<u8>>,
     pub body_tx: mpsc::Sender<Result<Vec<u8>, Error>>,
 }
 
 lazy_static! {
-    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<R>>> = Mutex::new(HashMap::new());
+    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<ProxyRequest>>> = Mutex::new(HashMap::new());
+    pub static ref RR: Mutex<HashMap<String, R>> = Mutex::new(HashMap::new());
 }
 
-pub fn get_site_host(host: String) -> Option<mpsc::Sender<R>> {
+pub fn rr_get(rid: String) -> Option<R> {
+    if let Some(r) = RR.lock().unwrap().get(rid.as_str()) {
+        Some(r.clone())
+    } else {
+        None
+    }
+}
+
+pub fn rr_set(rid: String, r: R) -> bool {
+    if get_site_host(rid.clone()).is_some() {
+        return false;
+    }
+
+    RR.lock().unwrap().insert(rid, r);
+    return true;
+}
+
+pub fn get_site_host(host: String) -> Option<mpsc::Sender<ProxyRequest>> {
     if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
         Some(site.clone())
     } else {
@@ -30,7 +47,7 @@ pub fn get_site_host(host: String) -> Option<mpsc::Sender<R>> {
     }
 }
 
-pub fn setup_site_host(host: String, otx: mpsc::Sender<R>) -> bool {
+pub fn setup_site_host(host: String, otx: mpsc::Sender<ProxyRequest>) -> bool {
     if get_site_host(host.clone()).is_some() {
         return false;
     }

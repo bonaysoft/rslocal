@@ -78,12 +78,17 @@ async fn proxy_dispatch(response: Response<Streaming<ProxyRequest>>, tx: Sender<
         let mut resp = vec![0u8; 0];
         io::copy(&mut stream, &mut resp).await.unwrap();
         let resp_length = resp.len();
+        let mut header_length = 1024;
+        if resp_length < header_length {
+            header_length = resp_length;
+        }
 
         // 分割header和body，方便服务端处理
-        let split_idx = String::from_utf8_lossy(resp.as_slice()).find("\r\n\r\n").unwrap();
-        let header = resp[..split_idx].to_owned();
+        let split_idx = String::from_utf8_lossy(&resp[..header_length]).find("\r\n\r\n").unwrap();
+        let header = resp[..split_idx+2].to_owned();
         let data = resp[split_idx + 4..].to_owned();
 
+        println!("{:?}", String::from_utf8_lossy(header.as_slice()));
         // 将Response发送会Server端
         tx.send(ProxyResponse { req_id: proxy_request_id, header, data }).await.unwrap();
 
@@ -97,6 +102,7 @@ async fn proxy_dispatch(response: Response<Streaming<ProxyRequest>>, tx: Sender<
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut parsed_resp = httparse::Response::new(&mut headers);
         parsed_resp.parse(resp.as_slice()).unwrap();
+        println!("{:?}", parsed_resp.headers);
 
         // 输出访问日志
         // todo 支持tcp日志

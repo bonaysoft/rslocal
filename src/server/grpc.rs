@@ -8,11 +8,13 @@ use lazy_static::lazy_static;
 use rand::{Rng, thread_rng};
 use rand::distributions::Alphanumeric;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tokio_stream::{wrappers::ReceiverStream};
 use tonic::{transport::Server, Request, Response, Status, Streaming};
+use crate::random_string;
 use crate::server::api::{LoginBody, LoginReply, ProxyRequest, ProxyResponse};
 use crate::server::api::rs_locald_server::{RsLocald, RsLocaldServer};
-use crate::server::{Config, get_site_host, remove_site_host, setup_site_host, web};
+use crate::server::{Config, get_site_host, remove_site_host, RR, rr_get, setup_site_host, web};
 use crate::server::config::Core;
 
 pub mod api {
@@ -87,6 +89,7 @@ impl RsLocald for RSLServer {
     async fn listen(&self, resp: Request<Streaming<ProxyResponse>>) -> Result<Response<Self::ListenStream>, Status> {
         println!("\tclient connected from: {:?}", resp.remote_addr());
         // todo 判断是否为tcp协议，如果是则启动一个tcp端口接收外部请求并转发给客户端
+        // todo 发送给TCP服务器一个信号，拉起一个TcpListener
 
         // 根据session_token获取host
         let session_id = resp.metadata().get("session_id").unwrap();
@@ -99,15 +102,22 @@ impl RsLocald for RSLServer {
         let host1 = host.clone();
         let host2 = host.clone();
 
-        let (itx, mut irx) = mpsc::channel(128);
+        // let (itx, mut irx) = mpsc::channel(128);
         let mut resp_stream = resp.into_inner();
         tokio::spawn(async move {
             while let Some(response) = resp_stream.next().await {
-                if itx.is_closed() {
+                println!("receive");
+                let pr = response.unwrap();
+                let itx = rr_get(pr.req_id).unwrap();
+                println!("rr_get");
+                if itx.body_tx.is_closed() {
+                    println!("closed");
                     return;
                 }
 
-                itx.send(response).await.unwrap();
+                println!("{:?}", String::from_utf8_lossy(pr.header.as_slice()));
+                itx.header_tx.send(pr.header).await.unwrap();
+                itx.body_tx.send(Ok(pr.data)).await.unwrap();
             }
             remove_site_host(host1);
             println!("client exit");
@@ -125,12 +135,12 @@ impl RsLocald for RSLServer {
                 // println!("got {:?}", msg.req.data.len()); // 接收来自入口的请求
 
                 // 发送给目标服务
-                tx.send(Result::Ok(ProxyRequest { req_id: msg.req.req_id, data: msg.req.data })).await.unwrap();
+                tx.send(Result::Ok(ProxyRequest { req_id: msg.req_id, data: msg.data })).await.unwrap();
 
                 // 等待目标服务响应
-                let response = irx.recv().await.unwrap().unwrap();
-                msg.header_tx.send(response.header).await.unwrap();
-                msg.body_tx.send(Ok(response.data)).await.unwrap();
+                // let response = irx.recv().await.unwrap().unwrap();
+                // msg.header_tx.send(response.header).await.unwrap();
+                // msg.body_tx.send(Ok(response.data)).await.unwrap();
             }
             println!("orx exit");
         });
@@ -153,8 +163,4 @@ pub async fn grpc_serve() -> Result<(), Box<dyn std::error::Error>> {
         .serve(addr)
         .await?;
     Ok(())
-}
-
-fn random_string(len: usize) -> String {
-    thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
