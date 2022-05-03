@@ -1,8 +1,5 @@
-use std::error::Error;
-use anyhow::anyhow;
 use rslocal::client;
 use clap::{Parser, Subcommand};
-use rslocal::client::{ClientError};
 
 /// A fictional versioning CLI
 #[derive(Debug, Parser)]
@@ -39,25 +36,20 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Cli::parse();
+    let source = config::File::with_name(&args.config);
+    let cfg = config::Config::builder().add_source(source).build().unwrap();
+    let endpoint = cfg.get_string("endpoint").unwrap();
+    let token = cfg.get_string("token").unwrap();
+
     match args.command {
         Commands::HTTP { port, subdomain } => {
-            let source = config::File::with_name(&args.config);
-            let cfg = config::Config::builder().add_source(source).build();
-            let ep = cfg.as_ref().unwrap().get_string("endpoint").unwrap();
-            let token = cfg.as_ref().unwrap().get_string("token").unwrap();
-
-            if let Err(err) = client::run(ep, token, format!("127.0.0.1:{}", port), subdomain.unwrap_or_default()).await {
-                return match err {
-                    ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
-                    ClientError::Status(status) => { Err(anyhow!("{}", status.message())) }
-                    ClientError::Other(err) => { Err(err) }
-                };
-            }
+            let sd = subdomain.unwrap_or_default();
+            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str(), sd.as_str()).await?;
+            tunnel.start("HTTP", port).await
         }
         Commands::TCP { port } => {
-            println!("expose the port {}", port);
+            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str(), "").await?;
+            tunnel.start("TCP", port).await
         }
     }
-
-    Ok(())
 }

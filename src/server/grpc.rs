@@ -13,7 +13,7 @@ use tonic::{transport::Server, Request, Response, Status, Streaming};
 use crate::random_string;
 use crate::server::api::{LoginBody, LoginReply, RequestEntry, ProxyRequest, ProxyResponse};
 use crate::server::api::rs_locald_server::{RsLocald, RsLocaldServer};
-use crate::server::{Config, get_site_host, grpc, remove_site_host, REQS, RR, rr_get, setup_site_host, web};
+use crate::server::{Config, get_site_host, grpc, remove_site_host, REQS, RR, rr_get, setup_site_host, rr};
 
 pub mod api {
     tonic::include_proto!("api");
