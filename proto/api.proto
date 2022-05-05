@@ -2,35 +2,46 @@ syntax = "proto3";
 package api;
 import "google/protobuf/empty.proto";
 
-service RsLocald {
+service User{
   rpc Login(LoginBody) returns (LoginReply);
-  rpc Listen(google.protobuf.Empty) returns (stream RequestEntry);
-  rpc FetchRequest(RequestEntry) returns (stream ProxyRequest);
-  rpc PublishResponse(stream ProxyResponse) returns (google.protobuf.Empty);
-}
-
-message RequestEntry{
-  string id = 1;
 }
 
 message LoginBody {
   string token = 1;
-  string subdomain = 2;
 }
 
 message LoginReply {
-  string endpoint = 1;
-  string session_id = 2;
-  string username = 3;
+  string session_id = 1;
+  string username = 2;
 }
 
-message ProxyRequest {
-  string reqId = 1;
-  bytes data = 2;
+service Tunnel {
+  rpc Listen(ListenParam) returns (stream ListenNotification);
+  rpc Transfer(stream TransferBody) returns (stream TransferReply);
 }
 
-message ProxyResponse {
-  string reqId = 1;
-  bytes data = 2;
-  bytes header = 3;
+enum Protocol{
+  HTTP = 0;
+  TCP = 1;
+//  UDP = 2;
+}
+
+message ListenParam{
+  Protocol protocol = 1;
+  string subdomain = 2;
+}
+
+message ListenNotification{
+  string action = 1;
+  string message = 2;
+}
+
+message TransferBody {
+  string conn_id = 1;
+  bytes resp_data = 2;
+}
+
+message TransferReply{
+  string conn_id = 1;
+  bytes req_data = 2;
 }

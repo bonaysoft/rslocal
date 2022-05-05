@@ -1,5 +1,6 @@
 use rslocal::client;
 use clap::{Parser, Subcommand};
+use rslocal::client::api::Protocol;
 
 /// A fictional versioning CLI
 #[derive(Debug, Parser)]
@@ -44,12 +45,14 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Commands::HTTP { port, subdomain } => {
             let sd = subdomain.unwrap_or_default();
-            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str(), sd.as_str()).await?;
-            tunnel.start("HTTP", port).await
+            let target = format!("127.0.0.1:{}", port);
+            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
+            tunnel.start(Protocol::Http, target, sd.as_str()).await
         }
         Commands::TCP { port } => {
-            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str(), "").await?;
-            tunnel.start("TCP", port).await
+            let target = format!("127.0.0.1:{}", port);
+            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
+            tunnel.start(Protocol::Tcp, target, "").await
         }
     }
 }

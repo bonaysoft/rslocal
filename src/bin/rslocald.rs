@@ -1,14 +1,10 @@
-use std::thread;
-use rslocal::server;
+use std::sync::Arc;
+use rslocal::server::Tunnel;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
 
-    // webServer
-    thread::spawn(|| {
-        server::http_serve();
-    });
-
-    // grpcServer
-    server::grpc_serve().unwrap();
+    let tunnel = Arc::new(Tunnel::new());
+    tunnel.start().await;
 }

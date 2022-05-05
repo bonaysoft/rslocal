@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use config::{ConfigError, Environment, File};
 use serde_derive::Deserialize;
