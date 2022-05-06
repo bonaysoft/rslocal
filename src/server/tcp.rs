@@ -1,3 +1,7 @@
+use std::fs;
+use std::fs::File;
+use std::io::Write;
+use bytes::BufMut;
 use log::debug;
 use tokio::io;
 use tokio::io::AsyncWriteExt;
@@ -17,6 +21,7 @@ impl TcpServer {
     }
     pub fn event_handler(&self, pl: Payload) {
         debug!("start tcp-server");
+        // todo stop tcp-server
         tokio::spawn(async move {
             let u = Url::parse(pl.bind_addr.as_str()).unwrap();
             let mut host = u.host_str().unwrap().to_string();
@@ -50,15 +55,14 @@ async fn stream_handler(mut stream: TcpStream) -> Sender<XData> {
             match xd {
                 XData::TX(tx) => {
                     // 客户端接入成功，开始接收数据并使用tx转发给客户端
-                    stream_dispatch(&mut stream, tx).await.unwrap();
+                    input_stream_dispatch(&mut stream, tx).await.unwrap();
                 }
                 XData::Data(data) => {
                     if data.eq("EOF".as_bytes()) {
                         break;
                     }
                     // 接收client发回的数据并Response
-                    println!("response data: {:?}", data);
-                    stream.write(data.as_slice()).await.unwrap();
+                    stream.write_all(&*data).await.unwrap();
                 }
             }
         }
@@ -66,30 +70,30 @@ async fn stream_handler(mut stream: TcpStream) -> Sender<XData> {
     tx
 }
 
-async fn stream_dispatch(stream: &mut TcpStream, tx: Sender<Vec<u8>>) -> anyhow::Result<()> {
-    println!("stream_handler");
+async fn input_stream_dispatch(stream: &mut TcpStream, tx: Sender<Vec<u8>>) -> anyhow::Result<()> {
+    debug!("input_stream_dispatch");
     loop {
         // Wait for the socket to be readable
         stream.readable().await?;
-        println!("start read");
+        debug!("start read");
 
         // Creating the buffer **after** the `await` prevents it from
         // being stored in the async task.
-        let mut buf = vec![0u8; 1024];
+        let mut buf = vec![0u8; 48 * 1024];
 
         // Try to read data, this may still fail with `WouldBlock`
         // if the readiness event is a false positive.
         match stream.try_read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                println!("read {} bytes", n);
-                tx.send(buf).await.unwrap();
-                if n <= 1024 {
+                debug!("read {} bytes", n);
+                tx.send(buf[..n].to_vec()).await.unwrap();
+                if n < 48 * 1024 {
                     break;
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                println!("WouldBlock");
+                debug!("WouldBlock");
                 continue;
             }
             Err(e) => {
@@ -98,7 +102,6 @@ async fn stream_dispatch(stream: &mut TcpStream, tx: Sender<Vec<u8>>) -> anyhow:
         }
     }
 
-    tx.send(vec![]).await.unwrap();
-    println!("stream_handler end");
+    debug!("input_stream_dispatch end");
     Ok(())
 }

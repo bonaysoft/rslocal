@@ -3,19 +3,21 @@ pub mod api {
 }
 
 use std::error::Error;
+use std::fs;
 use std::str::FromStr;
 use anyhow::anyhow;
 use log::{debug, info};
 use tokio::{io};
-use tokio::net::{TcpSocket};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tonic::transport::{Channel, Endpoint};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use crate::client::client::api::tunnel_client::TunnelClient;
-use crate::client::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol};
+use crate::client::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tonic::codegen::{InterceptedService};
 use tonic::service::Interceptor;
@@ -102,9 +104,10 @@ impl Tunnel {
                 "coming" => {
                     debug!("conn_id: {:?}", ln.message);
                     let client = self.client.clone();
+                    let target = target.clone();
                     tokio::spawn(async move {
                         debug!("conn_id: {:?}", ln.message);
-                        http_serve(client, ln.message).await;
+                        coming_handle(client, ln.message, protocol, target).await;
                     });
                 }
                 _ => {}
@@ -114,41 +117,84 @@ impl Tunnel {
     }
 }
 
-async fn http_serve(mut client: TunnelClient<InterceptedService<Channel, SessionInterceptor>>, conn_id: String) {
+type TunClient = TunnelClient<InterceptedService<Channel, SessionInterceptor>>;
+
+// 这个函数里处理的是一次完整请求
+async fn coming_handle(mut client: TunClient, conn_id: String, protocol: Protocol, target: String) {
     let (tx, rx) = mpsc::channel(128);
-    tx.send(TransferBody { conn_id, resp_data: vec![] }).await.unwrap(); // 通过conn_id连入服务端
-    let resp = client.transfer(ReceiverStream::new(rx)).await.unwrap();
-    let mut resp_stream = resp.into_inner();
-    while let Some(received) = resp_stream.next().await {
-        let received = received.unwrap();
-        debug!("received conn: `{}`", received.conn_id);
-        let txc = tx.clone();
-        tokio::spawn(async move {
-            debug!("pr: {:?}", received.conn_id);
-
-            proxy_transfer(received, txc).await
-        });
-    }
-}
-
-async fn proxy_transfer(pr: TransferReply, tx: Sender<TransferBody>) {
-    let addr = "127.0.0.1:8000".parse().unwrap();
+    tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Ready as i32, resp_data: vec![] }).await.unwrap(); // 通过conn_id连入服务端
 
     // 建立连接
     // todo 复用连接
+    let addr = target.parse().unwrap();
+    debug!("socket.connect to {:?}",addr);
     let socket = TcpSocket::new_v4().unwrap();
-    let mut stream = socket.connect(addr).await.unwrap();
-    let mut req_buf = io::BufReader::new(pr.req_data.as_slice());
-    // 发送请求
-    io::copy(&mut req_buf, &mut stream).await.unwrap();
-    // 接收响应
-    let mut resp = vec![0u8; 0];
-    io::copy(&mut stream, &mut resp).await.unwrap();
+    let mut target_stream = socket.connect(addr).await.unwrap();
 
+    let response = client.transfer(ReceiverStream::new(rx)).await.unwrap();
+    let mut resp_stream = response.into_inner();
+    while let Some(received) = resp_stream.next().await {
+        let received = received.unwrap();
+        debug!("received conn: `{}`", received.conn_id);
+        let req = received.req_data;
+        if req.is_empty() {
+            break;
+        }
+
+        // 发送请求
+        debug!("send req: {:?}",req.len());
+        debug!("req data: {:?}", String::from_utf8_lossy(req.as_slice()));
+        target_stream.write(req.as_slice()).await.unwrap();
+    }
+
+    // 接收响应
+    stream_dispatch(target_stream, conn_id, tx).await.unwrap();
+    // if protocol == Protocol::Http {
+    //     http_access_log(req_data, resp);
+    // }
+}
+
+async fn stream_dispatch(stream: TcpStream, conn_id: String, tx: Sender<TransferBody>) -> anyhow::Result<()> {
+    debug!("stream_dispatch");
+    loop {
+        // Wait for the socket to be readable
+        stream.readable().await?;
+        debug!("start read");
+
+        // Creating the buffer **after** the `await` prevents it from
+        // being stored in the async task.
+        let mut buf = vec![0u8; 48 * 1024];
+
+        // Try to read data, this may still fail with `WouldBlock`
+        // if the readiness event is a false positive.
+        match stream.try_read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                debug!("read {} bytes", n);
+                tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Working as i32, resp_data: buf[..n].to_owned() }).await.unwrap();
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                debug!("WouldBlock");
+                continue;
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+    }
+
+    tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Done as i32, resp_data: vec![] }).await.unwrap();
+    debug!("stream_dispatch end");
+    Ok(())
+}
+
+async fn send_response(conn_id: String, tx: Sender<TransferBody>, resp: Vec<u8>) {
     // 分批发送响应数据
     let per_send_length = 1 * 1024 * 1024;
     let mut start_idx = 0;
     let mut end_idx = per_send_length;
+    let mut already_sent = 0;
+    debug!("raw_resp_len: {}", resp.len());
     loop {
         if end_idx > resp.len() {
             end_idx = resp.len();
@@ -158,7 +204,9 @@ async fn proxy_transfer(pr: TransferReply, tx: Sender<TransferBody>) {
             break;
         }
 
-        let result = tx.send(TransferBody { conn_id: pr.conn_id.clone(), resp_data: resp[start_idx..end_idx].to_owned() }).await;
+        let tb = TransferBody { conn_id: conn_id.clone(), status: TStatus::Working as i32, resp_data: resp[start_idx..end_idx].to_owned() };
+        already_sent = already_sent + tb.resp_data.len();
+        let result = tx.send(tb).await;
         if result.is_err() {
             debug!("disconnect");
             break;
@@ -167,12 +215,14 @@ async fn proxy_transfer(pr: TransferReply, tx: Sender<TransferBody>) {
         start_idx = start_idx + per_send_length;
         end_idx = end_idx + per_send_length;
         if start_idx >= resp.len() {
-            tx.send(TransferBody { conn_id: pr.conn_id.clone(), resp_data: Vec::from("EOF") }).await;
             break;
         }
     }
+    tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Done as i32, resp_data: vec![] }).await.unwrap();
+    debug!("sent: {}", already_sent);
+}
 
-    // todo 判端是否为HTTP协议，如果是则提取header，用于打印访问日志
+fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {
     let resp_length = resp.len();
     let mut header_length = 1024;
     if resp_length < header_length {
@@ -180,10 +230,7 @@ async fn proxy_transfer(pr: TransferReply, tx: Sender<TransferBody>) {
     }
     let split_idx = String::from_utf8_lossy(&resp[..header_length]).find("\r\n\r\n").unwrap();
     let header = resp[..split_idx + 2].to_owned();
-    access_log(pr.req_data, header, resp_length);
-}
 
-fn access_log(req_bytes: Vec<u8>, resp_bytes: Vec<u8>, resp_length: usize) {
     // 解析http请求
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
@@ -192,7 +239,7 @@ fn access_log(req_bytes: Vec<u8>, resp_bytes: Vec<u8>, resp_length: usize) {
     // 解析http响应
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut parsed_resp = httparse::Response::new(&mut headers);
-    parsed_resp.parse(resp_bytes.as_slice()).unwrap();
+    parsed_resp.parse(resp.as_slice()).unwrap();
     debug!("{:?}", parsed_resp.headers);
 
     // 输出访问日志

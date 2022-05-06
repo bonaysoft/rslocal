@@ -23,7 +23,7 @@ service Tunnel {
 enum Protocol{
   HTTP = 0;
   TCP = 1;
-//  UDP = 2;
+  //  UDP = 2;
 }
 
 message ListenParam{
@@ -36,9 +36,16 @@ message ListenNotification{
   string message = 2;
 }
 
+enum TStatus {
+  Ready = 0;
+  Working = 1;
+  Done = 2;
+}
+
 message TransferBody {
   string conn_id = 1;
-  bytes resp_data = 2;
+  TStatus status = 2;
+  bytes resp_data = 3;
 }
 
 message TransferReply{
