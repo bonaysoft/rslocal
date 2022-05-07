@@ -3,21 +3,27 @@ pub mod api {
 }
 
 use std::error::Error;
+use std::future::{Ready};
+use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{Context, Poll};
+use futures::FutureExt;
 use anyhow::anyhow;
+use futures_core::ready;
 use log::{debug, info};
 use tokio::{io};
-use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
+use tokio::net::{TcpStream};
+use tokio::sync::{mpsc};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::transport::{Channel, Endpoint};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use crate::client::client::api::tunnel_client::TunnelClient;
 use crate::client::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
 use thiserror::Error;
-use tokio::io::{AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_stream::StreamExt;
+use tokio_util::sync::{PollSender};
 use tonic::codegen::{InterceptedService};
 use tonic::service::Interceptor;
 use crate::client::api::user_client::UserClient;
@@ -122,67 +128,129 @@ async fn coming_handle(mut client: TunClient, conn_id: String, protocol: Protoco
     let (tx, rx) = mpsc::channel(128);
     tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Ready as i32, resp_data: vec![] }).await.unwrap(); // 通过conn_id连入服务端
 
-    // 建立连接
-    // todo 复用连接
-    let addr = target.parse().unwrap();
-    debug!("socket.connect to {:?}",addr);
-    let socket = TcpSocket::new_v4().unwrap();
-    let mut target_stream = socket.connect(addr).await.unwrap();
-
-    let response = client.transfer(ReceiverStream::new(rx)).await.unwrap();
-    let mut resp_stream = response.into_inner();
-    while let Some(received) = resp_stream.next().await {
-        let received = received.unwrap();
-        debug!("received conn: `{}`", received.conn_id);
-        let req = received.req_data;
-        if req.is_empty() {
-            break;
+    let (tx2, rx2) = mpsc::channel(128);
+    let inbound_reader = RxReader { rx: rx2 };
+    let inbound_writer = TxWriter { conn_id, tx: PollSender::new(tx) };
+    tokio::spawn(async move {
+        let response = client.transfer(ReceiverStream::new(rx)).await.unwrap();
+        let mut resp_stream = response.into_inner();
+        while let Some(received) = resp_stream.next().await {
+            let tr = received.unwrap();
+            tx2.send(tr).await.unwrap();
         }
+    });
 
-        // 发送请求
-        debug!("send req: {:?}",req.len());
-        target_stream.write(req.as_slice()).await.unwrap();
-    }
+    let transfer = transfer(inbound_reader, inbound_writer, target).map(|r| {
+        debug!("transfer map: {:?}", r);
+        if let Err(e) = r {
+            println!("Failed to transfer; error={}", e);
+        }
+    });
 
-    // 接收响应
-    stream_forward(target_stream, conn_id, tx).await.unwrap();
+    tokio::spawn(transfer);
     // if protocol == Protocol::Http {
     //     http_access_log(req_data, resp);
     // }
 }
 
-async fn stream_forward(stream: TcpStream, conn_id: String, tx: Sender<TransferBody>) -> anyhow::Result<()> {
-    debug!("stream_forward");
-    loop {
-        // Wait for the socket to be readable
-        stream.readable().await?;
-        debug!("start read");
+async fn transfer<'a>(mut ri: RxReader, mut wi: TxWriter, proxy_addr: String) -> Result<(), Box<dyn Error>> {
+    debug!("transfer");
+    let mut outbound = TcpStream::connect(proxy_addr).await?;
+    let (mut ro, mut wo) = outbound.split();
 
-        // Creating the buffer **after** the `await` prevents it from
-        // being stored in the async task.
-        let mut buf = vec![0u8; 48 * 1024];
+    let client_to_server = async {
+        debug!("client_to_server");
+        io::copy(&mut ri, &mut wo).await?;
+        wo.shutdown().await
+    };
 
-        // Try to read data, this may still fail with `WouldBlock`
-        // if the readiness event is a false positive.
-        match stream.try_read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                debug!("read {} bytes", n);
-                tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Working as i32, resp_data: buf[..n].to_owned() }).await.unwrap();
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                debug!("WouldBlock");
-                continue;
-            }
-            Err(e) => {
-                return Err(e.into());
+    let server_to_client = async {
+        debug!("server_to_client");
+        io::copy(&mut ro, &mut wi).await?;
+        wi.shutdown().await
+    };
+
+    tokio::try_join!(client_to_server, server_to_client)?;
+
+    Ok(())
+}
+
+struct RxReader {
+    rx: Receiver<TransferReply>,
+}
+
+impl AsyncRead for RxReader {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        debug!(":poll_read");
+
+        match ready!(self.rx.poll_recv(cx)) {
+            None => {}
+            Some(tr) => {
+                debug!("{:?}:poll_recv", tr.conn_id);
+                let data = tr.req_data;
+                debug!(":poll_read_data: {:?}", String::from_utf8_lossy(data.as_slice()));
+                buf.put_slice(data.as_slice());
             }
         }
+
+        Poll::Ready(Ok(()))
+    }
+}
+
+struct TxWriter {
+    conn_id: String,
+    tx: PollSender<TransferBody>,
+}
+
+impl AsyncWrite for TxWriter {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
+        debug!("{:?}:poll_write:{}", self.conn_id, buf.len());
+        if buf.len() == 0 {
+            return Poll::Ready(Ok(0));
+        }
+
+        match ready!(self.tx.poll_reserve(cx)) {
+            Ok(_) => {
+                let conn_id = self.conn_id.clone();
+                let result = self.tx.send_item(TransferBody {
+                    conn_id,
+                    status: TStatus::Working as i32,
+                    resp_data: buf.to_vec(),
+                });
+                if let Err(err) = result {
+                    debug!("{:?}:poll_write err: {}", self.conn_id, err.to_string());
+                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)));
+                }
+            }
+            Err(_) => {}
+        }
+
+        Poll::Ready(Ok(buf.len()))
     }
 
-    tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Done as i32, resp_data: vec![] }).await.unwrap();
-    debug!("stream_forward done");
-    Ok(())
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        debug!("{:?}:poll_shutdown", self.conn_id);
+        match ready!(self.tx.poll_reserve(cx)) {
+            Ok(_) => {
+                let conn_id = self.conn_id.clone();
+                let result = self.tx.send_item(TransferBody {
+                    conn_id,
+                    status: TStatus::Done as i32,
+                    resp_data: vec![],
+                });
+                if let Err(err) = result {
+                    debug!("{:?}:poll_shutdown err: {}", self.conn_id, err.to_string());
+                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)));
+                }
+            }
+            Err(_) => {}
+        }
+        Poll::Ready(Ok(()))
+    }
 }
 
 fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {

@@ -3,7 +3,7 @@ use tokio::sync::mpsc::Sender;
 #[derive(Debug, Clone)]
 pub struct Payload {
     pub tx: Sender<Connection>,
-    pub bind_addr: String,
+    pub entrypoint: String,
 }
 
 #[derive(Debug, Clone)]

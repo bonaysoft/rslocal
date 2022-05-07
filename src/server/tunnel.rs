@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, oneshot};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender};
 use tonic::transport::Server;
-use crate::server::{check_auth, Config, HttpServer, MakeHttpServer, Payload, RSLServer, RSLUser, TcpServer};
+use crate::server::{Config, HttpServer, MakeHttpServer, Payload, RSLServer, RSLUser, TcpServer};
 use crate::server::api::tunnel_server::TunnelServer;
 use crate::server::api::user_server::UserServer;
 
@@ -24,13 +24,12 @@ impl Tunnel {
         }
     }
 
-    pub fn http_svc_start(&self) {
+    fn start_http_svc(&self) {
         println!("start http-server");
         let cfg = self.cfg.clone();
         let http_server_inner = Arc::clone(&self.http_server.inner);
         tokio::spawn(async move {
             let addr = cfg.http.bind_addr.parse().unwrap();
-            let cfg = cfg.http.clone();
             let server = hyper::Server::bind(&addr)
                 .http1_preserve_header_case(true)
                 .http1_title_case_headers(true)
@@ -45,7 +44,7 @@ impl Tunnel {
 
     pub async fn start(&self) {
         let (tx1, mut rx1) = mpsc::channel(128);
-        let http_server_inner = Arc::clone(&self.http_server.inner);
+        let http_server_inner = self.http_server.inner.clone();
         tokio::spawn(async move {
             while let Some(msg) = rx1.recv().await {
                 http_server_inner.lock().await.event_handler(msg).await;
@@ -60,21 +59,20 @@ impl Tunnel {
             }
         });
 
-        let cfg = self.cfg.clone();
-
-        self.http_svc_start();
-        Self::run(cfg, tx1, tx2).await.unwrap();
+        self.start_http_svc();
+        self.run_grpc_svc(tx1, tx2).await.unwrap();
     }
 
-    pub async fn run(cfg: Config, tx_http: Sender<Payload>, tx_tcp: Sender<Payload>) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run_grpc_svc(&self, tx_http: Sender<Payload>, tx_tcp: Sender<Payload>) -> Result<(), Box<dyn std::error::Error>> {
         println!("grpc_server");
+        let cfg = self.cfg.clone();
         let addr = cfg.core.bind_addr.parse()?;
         let user = RSLUser::new(cfg.clone());
-        let tunnel = RSLServer::new(cfg.clone(), tx_tcp, tx_http);
+        let tunnel = RSLServer::new(cfg, tx_tcp, tx_http);
 
         Server::builder()
-            .add_service(UserServer::new(user))
-            .add_service(TunnelServer::with_interceptor(tunnel, check_auth))
+            .add_service(UserServer::new(user.clone()))
+            .add_service(TunnelServer::with_interceptor(tunnel, user))
             .serve(addr)
             .await?;
         Ok(())

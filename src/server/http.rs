@@ -65,7 +65,7 @@ impl HttpServerInner {
     }
 
     pub async fn event_handler(&mut self, pl: Payload) {
-        let u = Url::parse(pl.bind_addr.as_str()).unwrap();
+        let u = Url::parse(pl.entrypoint.as_str()).unwrap();
         let mut host = u.host_str().unwrap().to_string();
         if let Some(port) = u.port() {
             host = format!("{}:{}", host, port);

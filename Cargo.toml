@@ -37,6 +37,7 @@ futures-core = "0.3"
 async-stream = "0.2"
 serde_json = "1.0"
 url = "2.2.2"
+dashmap = "5.3.3"
 
 [build-dependencies]
 tonic-build = { version = "0.7.1", features = ["prost"] }

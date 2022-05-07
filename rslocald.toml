@@ -2,7 +2,7 @@
 debug = false
 bind_addr = "[::1]:8422"
 auth_method = "token"  # token, oidc
-allow_ports = "50000-60000"
+allow_ports = "18000-19000"
 
 [http]
 bind_addr = "[::1]:8423"

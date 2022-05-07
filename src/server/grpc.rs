@@ -1,55 +1,59 @@
 use std::pin::Pin;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::fmt;
+use std::fmt::Error;
+use std::sync::{Arc};
 use std::time::Duration;
+use dashmap::DashSet;
 
 use futures::{Stream, StreamExt};
-use lazy_static::lazy_static;
 use log::debug;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tokio_stream::{wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
+use tonic::service::Interceptor;
 use crate::{random_string};
 use crate::server::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenNotification, Protocol, ListenParam, TStatus};
 use crate::server::api::tunnel_server::{Tunnel};
-use crate::server::{Config, grpc, Payload, XData, CONNS, conns_get};
+use crate::server::{Config, grpc, Payload, XData, Connection};
 use crate::server::api::user_server::User;
 
 pub mod api {
     tonic::include_proto!("api");
 }
 
-lazy_static! {
-    pub static ref SESSIONS: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
-}
-
-pub fn check_auth(req: Request<()>) -> Result<Request<()>, Status> {
-    println!("{:?}", req);
-    match req.metadata().get("authorization") {
-        Some(session) => {
-            if let Some(_) = SESSIONS.lock().unwrap().get(session.to_str().unwrap()) {
-                return Ok(req);
-            }
-            Err(Status::unauthenticated("invalid session"))
-        }
-
-        _ => Err(Status::unauthenticated("No valid auth token")),
-    }
-}
-
 const AUTH_METHOD_TOKEN: &str = "token";
 const AUTH_METHOD_OIDC: &str = "oidc";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RSLUser {
     cfg: Config,
+
+    sessions: Arc<parking_lot::Mutex<HashMap<String, String>>>,
+}
+
+impl Interceptor for RSLUser {
+    fn call(&mut self, req: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        let ss = self.sessions.clone();
+
+        match req.metadata().get("authorization") {
+            Some(session) => {
+                if let Some(_) = ss.lock().get(session.to_str().unwrap()) {
+                    return Ok(req);
+                }
+                Err(Status::unauthenticated("invalid session"))
+            }
+
+            _ => Err(Status::unauthenticated("No valid auth token")),
+        }
+    }
 }
 
 impl RSLUser {
     pub fn new(cfg: Config) -> Self {
-        RSLUser { cfg }
+        RSLUser { cfg, sessions: Arc::new(Default::default()) }
     }
     fn token2username(&self, token: String) -> Result<String, Status> {
         let cfg = self.cfg.clone();
@@ -82,7 +86,8 @@ impl User for RSLUser {
         debug!("{:?}", session_id);
 
         // 存储Session
-        SESSIONS.lock().unwrap().insert(session_id.clone(), username.clone());
+        let mut sessions = self.sessions.lock();
+        sessions.insert(session_id.clone(), username.clone());
         Ok(Response::new(LoginReply {
             session_id,
             username,
@@ -98,26 +103,52 @@ pub struct RSLServer {
     cfg: Config,
     tx_tcp: Sender<Payload>,
     tx_http: Sender<Payload>,
+
+    conns: Arc<Mutex<HashMap<String, Connection>>>,
+    entrypoints: Arc<Mutex<DashSet<String>>>,
 }
 
 impl RSLServer {
     pub fn new(cfg: Config, tx_tcp: Sender<Payload>, tx_http: Sender<Payload>) -> Self {
-        Self { cfg, tx_tcp, tx_http }
+        Self { cfg, tx_tcp, tx_http, conns: Default::default(), entrypoints: Default::default() }
     }
 
-    fn build_open_endpoint(&self, lp: ListenParam) -> String {
-        match Protocol::from_i32(lp.protocol).unwrap() {
+    async fn build_entrypoint(&self, lp: ListenParam) -> Result<String, Status> {
+        let oep_set = self.entrypoints.lock().await;
+        let oep_result = match Protocol::from_i32(lp.protocol).unwrap() {
             Protocol::Http => {
-                // 如果没有指定子域名则随机生成一个
                 let mut subdomain = lp.subdomain;
                 if subdomain.is_empty() {
-                    subdomain = random_string(8);
+                    subdomain = random_string(8); // 如果没有指定子域名则随机生成一个
                 }
 
-                format!("http://{}.{}", subdomain, self.cfg.http.default_domain).to_lowercase()
+                let key = format!("http://{}.{}", subdomain, self.cfg.http.default_domain).to_lowercase();
+                if oep_set.contains(key.as_str()) {
+                    return Err(Status::already_exists("open-endpoint already exist"));
+                }
+
+                Ok(key.to_string())
             }
-            Protocol::Tcp => format!("tcp://0.0.0.0:{}", 50000), // todo 从允许的范围内获取可用的端口
-        }
+            Protocol::Tcp => {
+                let (min_str, max_str) = self.cfg.core.allow_ports.split_once("-").unwrap();
+                let min: u16 = min_str.parse().unwrap();
+                let max: u16 = max_str.parse().unwrap();
+                for port in min..max {
+                    let oep = format!("tcp://0.0.0.0:{}", port);
+                    if !oep_set.contains(oep.as_str()) {
+                        return Ok(oep);
+                    }
+                }
+                Err(Status::internal("none valid tcp port"))
+            }
+        };
+
+        if let Ok(key) = oep_result {
+            oep_set.insert(key.clone());
+            return Ok(key);
+        };
+
+        oep_result
     }
 
     fn select_protocol_tx(&self, protocol: Protocol) -> Sender<Payload> {
@@ -136,27 +167,26 @@ impl Tunnel for RSLServer {
     async fn listen(&self, req: tonic::Request<grpc::api::ListenParam>) -> Result<Response<Self::ListenStream>, Status> {
         debug!("client connected from: {:?}", req.remote_addr());
         let lp = req.into_inner();
-        let open_endpoint = self.build_open_endpoint(lp.clone());
         let event_tx = self.select_protocol_tx(Protocol::from_i32(lp.protocol).unwrap());
 
-        // todo 检查开放端点是否已存在
-        // if get_site_host(host.clone()).is_some() {
-        //     return Err(Status::already_exists("vhost already exist"));
-        // }
-
-        debug!("start a new endpoint: {:?}", open_endpoint);
+        // 创建一个外部访问端点
+        let entrypoint = self.build_entrypoint(lp.clone()).await?;
+        debug!("start a new endpoint: {:?}", entrypoint);
         let (tx, rx) = mpsc::channel(128);
-        tx.send(Ok(ListenNotification { action: ACTION_READY.to_string(), message: open_endpoint.clone() })).await.unwrap();
+        tx.send(Ok(ListenNotification { action: ACTION_READY.to_string(), message: entrypoint.clone() })).await.unwrap();
 
+        // 监听客户端断开
         let txc = tx.clone();
         let etx = event_tx.clone();
-        let oec = open_endpoint.clone();
+        let epc = entrypoint.clone();
+        let eps = self.entrypoints.clone();
         tokio::spawn(async move {
             loop {
                 if txc.is_closed() {
                     let (tx, _) = mpsc::channel(128);
-                    etx.send(Payload { tx, bind_addr: oec.clone() }).await.unwrap();
-                    debug!("{} closed", oec);
+                    etx.send(Payload { tx, entrypoint: epc.clone() }).await.unwrap();
+                    eps.lock().await.remove(epc.as_str());
+                    debug!("{} closed", epc);
                     return;
                 }
                 sleep(Duration::from_secs(1)).await;
@@ -165,16 +195,18 @@ impl Tunnel for RSLServer {
 
         // 通知有新客户端连入
         let (otx, mut orx) = mpsc::channel(128);
-        event_tx.send(Payload { tx: otx, bind_addr: open_endpoint }).await.unwrap();
+        event_tx.send(Payload { tx: otx, entrypoint: entrypoint }).await.unwrap();
         debug!("send done");
 
+        // 监听外部请求
+        let conns = Arc::clone(&self.conns);
         tokio::spawn(async move {
             while let Some(conn) = orx.recv().await {
                 if tx.is_closed() { break; }
                 debug!("req_id {:?}", conn.id); // 接收来自入口的请求
 
                 // 发送给目标服务
-                CONNS.lock().unwrap().insert(conn.id.clone(), conn.clone());
+                conns.lock().await.insert(conn.id.clone(), conn.clone());
                 tx.send(Ok(ListenNotification { action: ACTION_COMING.to_string(), message: conn.id.clone() })).await.unwrap();
             }
             debug!("orx exit");
@@ -189,27 +221,34 @@ impl Tunnel for RSLServer {
 
     async fn transfer(&self, req: Request<Streaming<TransferBody>>) -> Result<Response<Self::TransferStream>, Status> {
         let (req_tx, req_rx) = mpsc::channel(128);
+        let conns = Arc::clone(&self.conns);
         tokio::spawn(async move {
             let mut in_stream = req.into_inner();
             while let Some(result) = in_stream.next().await {
                 let pr = result.unwrap();
-                let conn = conns_get(pr.conn_id.clone()).unwrap();
+                let mg = conns.lock().await;
+                let conn = mg.get(pr.conn_id.as_str()).unwrap();
                 let ts = TStatus::from_i32(pr.status).unwrap();
                 match ts {
                     TStatus::Ready => {
-                        // 这里是要发送出去的请求数据
+                        debug!("status ready: {}", pr.conn_id);
+                        let rtx = req_tx.clone();
                         let (tx, mut rx) = mpsc::channel(128);
                         conn.tx.send(XData::TX(tx)).await.unwrap(); // 通知Conn开始接收请求数据
-                        while let Some(req_data) = rx.recv().await {
-                            debug!("send req len: {:?}", req_data.len());
-                            if req_data.is_empty() {
-                                break;
-                            }
+                        // 使用异步来接收数据，否则会导致mutex无法释放
+                        tokio::spawn(async move {
+                            // 这里是要发送出去的请求数据
+                            while let Some(req_data) = rx.recv().await {
+                                debug!("send req len: {:?}", req_data.len());
+                                if req_data.is_empty() {
+                                    break;
+                                }
 
-                            req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data })).await.unwrap();
-                        }
-                        req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data: vec![] })).await.unwrap();
-                        debug!("send req done");
+                                rtx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data })).await.unwrap();
+                            }
+                            rtx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data: vec![] })).await.unwrap();
+                            debug!("send req done");
+                        });
                     }
                     TStatus::Working => {
                         // 返回接收到的响应数据
