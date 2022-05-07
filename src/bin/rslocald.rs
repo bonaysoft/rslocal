@@ -5,6 +5,6 @@ use rslocal::server::Tunnel;
 async fn main() {
     env_logger::init();
 
-    let tunnel = Arc::new(Tunnel::new());
+    let tunnel = Tunnel::new();
     tunnel.start().await;
 }

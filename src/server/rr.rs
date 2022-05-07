@@ -15,7 +15,7 @@ use crate::server::{Connection, grpc};
 // }
 
 lazy_static! {
-    pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<Connection>>> = Mutex::new(HashMap::new());
+    // pub static ref VHOST: Mutex<HashMap<String, mpsc::Sender<Connection>>> = Mutex::new(HashMap::new());
     // pub static ref RR: Mutex<HashMap<String, R>> = Mutex::new(HashMap::new());
     pub static ref CONNS: Mutex<HashMap<String, Connection>> = Mutex::new(HashMap::new());
 }
@@ -45,25 +45,25 @@ pub fn conns_get(id: String) -> Option<Connection> {
 //     return true;
 // }
 
-pub fn get_site_host(host: String) -> Option<mpsc::Sender<Connection>> {
-    if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
-        Some(site.clone())
-    } else {
-        None
-    }
-}
+// pub fn get_site_host(host: String) -> Option<mpsc::Sender<Connection>> {
+//     if let Some(site) = VHOST.lock().unwrap().get(host.as_str()) {
+//         Some(site.clone())
+//     } else {
+//         None
+//     }
+// }
 
-pub fn setup_site_host(host: String, otx: Sender<Connection>) -> bool {
-    if get_site_host(host.clone()).is_some() {
-        return false;
-    }
-
-    VHOST.lock().unwrap().insert(host, otx);
-    return true;
-}
-
-pub fn remove_site_host(host: String) {
-    VHOST.lock().unwrap().remove(host.as_str());
-}
-
+// pub fn setup_site_host(host: String, otx: Sender<Connection>) -> bool {
+//     if get_site_host(host.clone()).is_some() {
+//         return false;
+//     }
+//
+//     VHOST.lock().unwrap().insert(host, otx);
+//     return true;
+// }
+//
+// pub fn remove_site_host(host: String) {
+//     VHOST.lock().unwrap().remove(host.as_str());
+// }
+//
 

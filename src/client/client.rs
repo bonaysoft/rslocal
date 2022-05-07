@@ -3,7 +3,6 @@ pub mod api {
 }
 
 use std::error::Error;
-use std::fs;
 use std::str::FromStr;
 use anyhow::anyhow;
 use log::{debug, info};
@@ -17,7 +16,7 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::client::client::api::tunnel_client::TunnelClient;
 use crate::client::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tonic::codegen::{InterceptedService};
 use tonic::service::Interceptor;
@@ -106,7 +105,6 @@ impl Tunnel {
                     let client = self.client.clone();
                     let target = target.clone();
                     tokio::spawn(async move {
-                        debug!("conn_id: {:?}", ln.message);
                         coming_handle(client, ln.message, protocol, target).await;
                     });
                 }
@@ -143,19 +141,18 @@ async fn coming_handle(mut client: TunClient, conn_id: String, protocol: Protoco
 
         // 发送请求
         debug!("send req: {:?}",req.len());
-        debug!("req data: {:?}", String::from_utf8_lossy(req.as_slice()));
         target_stream.write(req.as_slice()).await.unwrap();
     }
 
     // 接收响应
-    stream_dispatch(target_stream, conn_id, tx).await.unwrap();
+    stream_forward(target_stream, conn_id, tx).await.unwrap();
     // if protocol == Protocol::Http {
     //     http_access_log(req_data, resp);
     // }
 }
 
-async fn stream_dispatch(stream: TcpStream, conn_id: String, tx: Sender<TransferBody>) -> anyhow::Result<()> {
-    debug!("stream_dispatch");
+async fn stream_forward(stream: TcpStream, conn_id: String, tx: Sender<TransferBody>) -> anyhow::Result<()> {
+    debug!("stream_forward");
     loop {
         // Wait for the socket to be readable
         stream.readable().await?;
@@ -184,42 +181,8 @@ async fn stream_dispatch(stream: TcpStream, conn_id: String, tx: Sender<Transfer
     }
 
     tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Done as i32, resp_data: vec![] }).await.unwrap();
-    debug!("stream_dispatch end");
+    debug!("stream_forward done");
     Ok(())
-}
-
-async fn send_response(conn_id: String, tx: Sender<TransferBody>, resp: Vec<u8>) {
-    // 分批发送响应数据
-    let per_send_length = 1 * 1024 * 1024;
-    let mut start_idx = 0;
-    let mut end_idx = per_send_length;
-    let mut already_sent = 0;
-    debug!("raw_resp_len: {}", resp.len());
-    loop {
-        if end_idx > resp.len() {
-            end_idx = resp.len();
-        }
-        if tx.is_closed() {
-            debug!("disconnect");
-            break;
-        }
-
-        let tb = TransferBody { conn_id: conn_id.clone(), status: TStatus::Working as i32, resp_data: resp[start_idx..end_idx].to_owned() };
-        already_sent = already_sent + tb.resp_data.len();
-        let result = tx.send(tb).await;
-        if result.is_err() {
-            debug!("disconnect");
-            break;
-        }
-
-        start_idx = start_idx + per_send_length;
-        end_idx = end_idx + per_send_length;
-        if start_idx >= resp.len() {
-            break;
-        }
-    }
-    tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Done as i32, resp_data: vec![] }).await.unwrap();
-    debug!("sent: {}", already_sent);
 }
 
 fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {

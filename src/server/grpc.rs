@@ -4,7 +4,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
-use futures_util::SinkExt;
 use lazy_static::lazy_static;
 use log::debug;
 use tokio::sync::mpsc;
@@ -12,7 +11,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tokio_stream::{wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
-use crate::{client, random_string};
+use crate::{random_string};
 use crate::server::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenNotification, Protocol, ListenParam, TStatus};
 use crate::server::api::tunnel_server::{Tunnel};
 use crate::server::{Config, grpc, Payload, XData, CONNS, conns_get};
@@ -99,8 +98,6 @@ pub struct RSLServer {
     cfg: Config,
     tx_tcp: Sender<Payload>,
     tx_http: Sender<Payload>,
-
-    // conns: HashMap<String, server::Connection>,
 }
 
 impl RSLServer {
@@ -157,9 +154,9 @@ impl Tunnel for RSLServer {
         tokio::spawn(async move {
             loop {
                 if txc.is_closed() {
-                    debug!("closed");
                     let (tx, _) = mpsc::channel(128);
-                    etx.send(Payload { tx, bind_addr: oec }).await.unwrap();
+                    etx.send(Payload { tx, bind_addr: oec.clone() }).await.unwrap();
+                    debug!("{} closed", oec);
                     return;
                 }
                 sleep(Duration::from_secs(1)).await;
@@ -192,44 +189,37 @@ impl Tunnel for RSLServer {
 
     async fn transfer(&self, req: Request<Streaming<TransferBody>>) -> Result<Response<Self::TransferStream>, Status> {
         let (req_tx, req_rx) = mpsc::channel(128);
-
         tokio::spawn(async move {
             let mut in_stream = req.into_inner();
             while let Some(result) = in_stream.next().await {
-                match result {
-                    Ok(pr) => {
-                        let conn = conns_get(pr.conn_id.clone()).unwrap();
-                        let ts = TStatus::from_i32(pr.status).unwrap();
-                        match ts {
-                            TStatus::Ready => {
-                                // 这里是要发送出去的请求数据
-                                let (tx, mut rx) = mpsc::channel(128);
-                                conn.tx.send(XData::TX(tx)).await.unwrap(); // 通知Conn开始接收请求数据
-                                while let Some(req_data) = rx.recv().await {
-                                    debug!("send req len: {:?}", req_data.len());
-                                    if req_data.is_empty() {
-                                        break;
-                                    }
-
-                                    req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data })).await.unwrap();
-                                }
-                                req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data: vec![] })).await.unwrap();
-                                debug!("send req done");
-                            }
-                            TStatus::Working => {
-                                // 返回接收到的响应数据
-                                debug!("receive resp len: {}", pr.resp_data.len());
-                                conn.tx.send(XData::Data(pr.resp_data)).await.unwrap();
-                            }
-                            TStatus::Done => {
-                                debug!("receive resp done");
-                                conn.tx.send(XData::Data(Vec::from("EOF"))).await.unwrap();
+                let pr = result.unwrap();
+                let conn = conns_get(pr.conn_id.clone()).unwrap();
+                let ts = TStatus::from_i32(pr.status).unwrap();
+                match ts {
+                    TStatus::Ready => {
+                        // 这里是要发送出去的请求数据
+                        let (tx, mut rx) = mpsc::channel(128);
+                        conn.tx.send(XData::TX(tx)).await.unwrap(); // 通知Conn开始接收请求数据
+                        while let Some(req_data) = rx.recv().await {
+                            debug!("send req len: {:?}", req_data.len());
+                            if req_data.is_empty() {
                                 break;
                             }
+
+                            req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data })).await.unwrap();
                         }
+                        req_tx.send(Ok(TransferReply { conn_id: pr.conn_id.clone(), req_data: vec![] })).await.unwrap();
+                        debug!("send req done");
                     }
-                    Err(err) => {
-                        debug!("err: {:?}", err);
+                    TStatus::Working => {
+                        // 返回接收到的响应数据
+                        debug!("receive resp len: {}", pr.resp_data.len());
+                        conn.tx.send(XData::Data(pr.resp_data)).await.unwrap();
+                    }
+                    TStatus::Done => {
+                        debug!("receive resp done");
+                        conn.tx.send(XData::Data(Vec::from("EOF"))).await.unwrap();
+                        break;
                     }
                 }
             }

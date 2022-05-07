@@ -1,50 +1,78 @@
-use std::fs;
-use std::fs::File;
-use std::io::Write;
-use bytes::BufMut;
-use log::debug;
-use tokio::io;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use log::{debug, info};
+use parking_lot::Mutex;
+use tokio::{io, select};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::Sender;
 use url::Url;
 use crate::random_string;
 use crate::server::{Connection, Payload, XData};
 
-#[derive(Clone, Copy)]
-pub struct TcpServer {}
+#[derive(Clone)]
+pub struct TcpServer {
+    listeners: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+}
 
 impl TcpServer {
     pub fn new() -> Self {
-        TcpServer {}
+        TcpServer { listeners: Default::default() }
     }
-    pub fn event_handler(&self, pl: Payload) {
+
+    pub async fn event_handler(&mut self, pl: Payload) {
+        let u = Url::parse(pl.bind_addr.as_str()).unwrap();
+        let mut addr = u.host_str().unwrap().to_string();
+        if let Some(port) = u.port() {
+            addr = format!("{}:{}", addr, port);
+        }
+
+        if pl.tx.is_closed() {
+            debug!("stop tcp-server");
+            self.stop(addr);
+            return;
+        }
+
         debug!("start tcp-server");
-        // todo stop tcp-server
+        self.start(addr, pl.tx).await;
+    }
+
+    async fn start(&mut self, addr: String, conn_tx: Sender<Connection>) {
+        let (tx, rx) = oneshot::channel();
+        self.listeners.lock().insert(addr.clone(), tx); // 存储tx供stop调用
+
         tokio::spawn(async move {
-            let u = Url::parse(pl.bind_addr.as_str()).unwrap();
-            let mut host = u.host_str().unwrap().to_string();
-            if let Some(port) = u.port() {
-                host = format!("{}:{}", host, port);
-            }
+            info!("TCP Server Listening on {}", addr.clone());
+            let listener = TcpListener::bind(addr).await.unwrap();
+            tokio::select! {
+            _ = async {
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let conn_txc = conn_tx.clone();
+                    tokio::spawn(async move {
+                        debug!("processing stream from: {:?}", stream.peer_addr());
+                        let tx = stream_handler(stream).await; // 准备接收器
+                        conn_txc.send(Connection { id: random_string(32), tx }).await.unwrap(); // 通知Connection已就绪
+                    });
+                }
 
-            debug!("TCP Server Listening on {}", host);
-            let listener = TcpListener::bind(host).await.unwrap();
-
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let plc = pl.clone();
-                tokio::spawn(async move {
-                    debug!("processing stream from: {:?}", stream.peer_addr());
-                    let tx = stream_handler(stream).await; // 准备接收器
-                    plc.tx.send(Connection { id: random_string(32), tx }).await.unwrap(); // 通知Connection已就绪
-                });
+                // Help the rust type inferencer out
+                Ok::<_, io::Error>(())
+            } => {}
+            _ = rx => {
+                info!("TCP Server terminating");
             }
+        }
         });
     }
 
-    pub fn start(&self) {}
+    fn stop(&self, addr: String) {
+        let mut mg = self.listeners.lock();
+        let tx = mg.remove(addr.as_str()).unwrap();
+        tx.send(()).unwrap();
+    }
 }
 
 async fn stream_handler(mut stream: TcpStream) -> Sender<XData> {
