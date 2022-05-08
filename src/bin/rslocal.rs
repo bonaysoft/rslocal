@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use env_logger::Env;
 use rslocal::client;
 use rslocal::server::api::Protocol;
 
@@ -13,6 +14,9 @@ struct Cli {
     /// config file of rslocal
     #[clap(short, long, default_value_t = String::from("rslocal"))]
     config: String,
+    /// logging level: 'trace', 'debug', 'info', 'warn', 'error'
+    #[clap(long, default_value_t = String::from("info"))]
+    log_level: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -35,13 +39,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
     let args = Cli::parse();
+
     let source = config::File::with_name(&args.config);
     let cfg = config::Config::builder().add_source(source).build().unwrap();
+
+    let env = Env::default().default_filter_or(format!("rslocal={}", &args.log_level));
+    env_logger::Builder::from_env(env).init();
+
     let endpoint = cfg.get_string("endpoint").unwrap();
     let token = cfg.get_string("token").unwrap();
-
     match args.command {
         Commands::HTTP { port, subdomain } => {
             let sd = subdomain.unwrap_or_default();

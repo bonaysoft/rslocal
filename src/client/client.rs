@@ -4,22 +4,21 @@ pub mod api {
 
 use std::error::Error;
 use std::str::FromStr;
-use std::task::{Context, Poll};
 use futures::FutureExt;
 use anyhow::anyhow;
 use log::{debug, info};
 use tokio::{io};
 use tokio::net::{TcpStream};
 use tokio::sync::{mpsc};
-use tokio::sync::mpsc::{Receiver, Sender};
+
 use tonic::transport::{Channel, Endpoint};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Request, Status};
 use crate::server::api::tunnel_client::TunnelClient;
 use crate::server::api::user_client::UserClient;
 use crate::server::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{PollSender};
 use tonic::codegen::{InterceptedService};
@@ -30,6 +29,9 @@ use crate::{RxReader, TxWriter};
 pub enum ClientError {
     #[error(transparent)]
     Connect(#[from] tonic::transport::Error),
+
+    #[error(transparent)]
+    Disconnect(anyhow::Error),
 
     #[error("{0}")]
     Status(#[from] tonic::Status),
@@ -85,7 +87,11 @@ impl Tunnel {
         if let Err(err) = result {
             match err {
                 ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
-                ClientError::Status(status) => { Err(anyhow!("{}", status.message())) }
+                ClientError::Disconnect(err) => {
+                    Err(anyhow!("remote server disconnect"))
+                    // todo 增加断线重连机制
+                }
+                ClientError::Status(status) => { Err(anyhow!("{}: {}", status.code(), status.message())) }
                 ClientError::Other(err) => { Err(err) }
             }
         } else {
@@ -98,6 +104,10 @@ impl Tunnel {
         let response = self.client.listen(ListenParam { protocol: protocol.into(), subdomain }).await?;
         let mut resp_stream = response.into_inner();
         while let Some(resp_stream_result) = resp_stream.next().await {
+            if let Err(err) = resp_stream_result {
+                return Err(ClientError::Disconnect(anyhow!(err)));
+            }
+
             let ln = resp_stream_result.unwrap(); //todo 处理连接断开的情况
             match ln.action.as_str() {
                 "ready" => {
@@ -183,7 +193,7 @@ fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {
     // 解析http请求
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
-    req.parse(req_bytes.as_slice()).unwrap();
+    req.parse(header.as_slice()).unwrap();
 
     // 解析http响应
     let mut headers = [httparse::EMPTY_HEADER; 64];

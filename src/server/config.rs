@@ -1,8 +1,7 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use config::{ConfigError, Environment, File};
 use serde_derive::Deserialize;
-use std::env;
+use log::info;
 
 #[derive(Debug, Clone, Deserialize)]
 #[allow(unused)]
@@ -30,7 +29,7 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Result<Self, ConfigError> {
-        let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
+        // let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
 
         let s = config::Config::builder()
             .add_source(File::with_name("/etc/rslocal/rslocald").required(false))
@@ -39,8 +38,8 @@ impl Config {
             .build()?;
 
         // Now that we're done, let's access our configuration
-        println!("debug: {:?}", s.get_bool("core.debug"));
-        println!("core_bind_addr: {:?}", s.get::<String>("core.bind_addr"));
+        info!("debug: {:?}", s.get_bool("core.debug"));
+        info!("core_bind_addr: {:?}", s.get::<String>("core.bind_addr"));
 
         // You can deserialize (and thus freeze) the entire configuration as
         s.try_deserialize()

@@ -1,13 +1,11 @@
 use std::pin::Pin;
 use std::collections::HashMap;
-use std::fmt;
-use std::fmt::Error;
 use std::sync::{Arc};
 use std::time::Duration;
 use dashmap::DashSet;
 
 use futures::{Stream, StreamExt};
-use log::debug;
+use log::{debug, info};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
@@ -80,10 +78,10 @@ impl User for RSLUser {
 
         // 验证token是否正确并获取用户名
         let username = self.token2username(token)?;
-        debug!("{}", username);
+        info!("user {} logged in", username);
 
         let session_id: String = random_string(128);
-        debug!("{:?}", session_id);
+        debug!("user {} session: {:?}", username, session_id);
 
         // 存储Session
         let mut sessions = self.sessions.lock();
@@ -173,13 +171,13 @@ impl Tunnel for RSLServer {
     type ListenStream = Pin<Box<dyn Stream<Item=Result<grpc::api::ListenNotification, Status>> + Send>>;
 
     async fn listen(&self, req: tonic::Request<grpc::api::ListenParam>) -> Result<Response<Self::ListenStream>, Status> {
-        debug!("client connected from: {:?}", req.remote_addr());
+        info!("client connected from: {:?}", req.remote_addr());
         let lp = req.into_inner();
         let event_tx = self.select_protocol_tx(Protocol::from_i32(lp.protocol).unwrap());
 
         // 创建一个外部访问端点
         let entrypoint = self.build_entrypoint(lp.clone()).await?;
-        debug!("start a new endpoint: {:?}", entrypoint);
+        info!("entrypoint: {} registered", entrypoint);
         let (tx, rx) = mpsc::channel(128);
         tx.send(Ok(ListenNotification { action: ACTION_READY.to_string(), message: entrypoint.clone() })).await.unwrap();
 
@@ -194,7 +192,7 @@ impl Tunnel for RSLServer {
                     let (tx, _) = mpsc::channel(128);
                     etx.send(Payload { tx, entrypoint: epc.clone() }).await.unwrap();
                     eps.lock().await.remove(epc.as_str());
-                    debug!("{} closed", epc);
+                    info!("entrypoint {} unregistered", epc);
                     return;
                 }
                 sleep(Duration::from_secs(1)).await;
@@ -203,7 +201,7 @@ impl Tunnel for RSLServer {
 
         // 通知有新客户端连入
         let (otx, mut orx) = mpsc::channel(128);
-        event_tx.send(Payload { tx: otx, entrypoint: entrypoint }).await.unwrap();
+        event_tx.send(Payload { tx: otx, entrypoint }).await.unwrap();
         debug!("send done");
 
         // 监听外部请求
@@ -211,7 +209,7 @@ impl Tunnel for RSLServer {
         tokio::spawn(async move {
             while let Some(conn) = orx.recv().await {
                 if tx.is_closed() { break; }
-                debug!("req_id {:?}", conn.id); // 接收来自入口的请求
+                info!("coming new connection: {}", conn.id); // 接收来自入口的请求
 
                 // 发送给目标服务
                 conns.lock().await.insert(conn.id.clone(), conn.clone());
@@ -239,7 +237,7 @@ impl Tunnel for RSLServer {
                 let ts = TStatus::from_i32(pr.status).unwrap();
                 match ts {
                     TStatus::Ready => {
-                        debug!("status ready: {}", pr.conn_id);
+                        debug!("connection ready to transfer: {}", pr.conn_id);
                         let rtx = req_tx.clone();
                         let (tx, mut rx) = mpsc::channel(128);
                         conn.tx.send(XData::TX(tx)).await.unwrap(); // 通知Conn开始接收请求数据

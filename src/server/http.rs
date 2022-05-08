@@ -44,15 +44,21 @@ impl Service<Request<Body>> for HttpServer {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let inner = Arc::clone(&self.inner);
+        let method = req.method().clone();
+        let uri = req.uri().clone();
+        let version = req.version().clone();
         let res = async move {
-            inner.lock().await.proxy(req).await
+            let resp = inner.lock().await.proxy(req).await.unwrap();
+            // 输出访问日志
+            info!("\"{} {} {:?}\" {} {}", method, uri, version,
+            resp.status(), "-");
+            Ok(resp)
         };
 
         Box::pin(res)
     }
 }
 
-#[derive(Clone)]
 pub struct HttpServerInner {
     cfg: HTTPConfig,
 

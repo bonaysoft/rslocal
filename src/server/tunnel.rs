@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use log::{debug, info};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender};
 use tonic::transport::Server;
@@ -14,8 +15,7 @@ pub struct Tunnel {
 }
 
 impl Tunnel {
-    pub fn new() -> Self {
-        let cfg = Config::new().unwrap();
+    pub fn new(cfg: Config) -> Self {
         let http_cfg = cfg.http.clone();
         Tunnel {
             cfg,
@@ -25,7 +25,7 @@ impl Tunnel {
     }
 
     fn start_http_svc(&self) {
-        println!("start http-server");
+        debug!("start http-server");
         let cfg = self.cfg.clone();
         let http_server_inner = Arc::clone(&self.http_server.inner);
         tokio::spawn(async move {
@@ -35,7 +35,7 @@ impl Tunnel {
                 .http1_title_case_headers(true)
                 .serve(MakeHttpServer { http_server: HttpServer { inner: http_server_inner } });
 
-            println!("Listening on http://{}", addr);
+            info!("http server listening on //{}", addr);
             if let Err(e) = server.await {
                 eprintln!("server error: {}", e);
             }
@@ -64,12 +64,13 @@ impl Tunnel {
     }
 
     async fn run_grpc_svc(&self, tx_http: Sender<Payload>, tx_tcp: Sender<Payload>) -> Result<(), Box<dyn std::error::Error>> {
-        println!("grpc_server");
+        debug!("run_grpc_svc");
         let cfg = self.cfg.clone();
         let addr = cfg.core.bind_addr.parse()?;
         let user = RSLUser::new(cfg.clone());
         let tunnel = RSLServer::new(cfg, tx_tcp, tx_http);
 
+        info!("grpc server listening on //{}", addr);
         Server::builder()
             .add_service(UserServer::new(user.clone()))
             .add_service(TunnelServer::with_interceptor(tunnel, user))
@@ -80,18 +81,18 @@ impl Tunnel {
 }
 
 
-async fn event_loop<T>(callback: impl Fn(T) + Send + 'static) -> Sender<T>
-    where
-        T: Send + 'static
-{
-    let (tx, mut rx) = mpsc::channel(128);
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            callback(msg)
-        }
-    });
-    tx
-}
+// async fn event_loop<T>(callback: impl Fn(T) + Send + 'static) -> Sender<T>
+//     where
+//         T: Send + 'static
+// {
+//     let (tx, mut rx) = mpsc::channel(128);
+//     tokio::spawn(async move {
+//         while let Some(msg) = rx.recv().await {
+//             callback(msg)
+//         }
+//     });
+//     tx
+// }
 // async fn key_recv<V>(key: String) -> V {
 //     let (tx, mut rx) = mpsc::channel(128);
 //     VHOST.lock().unwrap().insert(key, tx);

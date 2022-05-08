@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
-use log::{debug, info};
+use log::{debug, error, info};
 use parking_lot::Mutex;
 use futures::FutureExt;
-use tokio::{io, select};
+use tokio::{io};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{Sender};
 use tokio_util::sync::PollSender;
 use url::Url;
-use crate::{random_string, RxReader, TransferReply, TxWriter};
+use crate::{random_string, RxReader, TxWriter};
 use crate::server::{Connection, Payload, XData};
 
 #[derive(Clone)]
@@ -47,7 +47,7 @@ impl TcpServer {
         self.listeners.lock().insert(addr.clone(), tx); // 存储tx供stop调用
 
         tokio::spawn(async move {
-            info!("TCP Server Listening on {}", addr.clone());
+            info!("tcp server listening on {}", addr.clone());
             let listener = TcpListener::bind(addr).await.unwrap();
             tokio::select! {
             _ = async {
@@ -61,7 +61,7 @@ impl TcpServer {
                 Ok::<_, io::Error>(())
             } => {}
             _ = rx => {
-                info!("TCP Server terminating");
+                debug!("tcp server terminating");
             }
         }
         });
@@ -71,11 +71,12 @@ impl TcpServer {
         let mut mg = self.listeners.lock();
         let tx = mg.remove(addr.as_str()).unwrap();
         tx.send(()).unwrap();
+        info!("tcp server {} closed.", addr.clone());
     }
 }
 
 async fn process(stream: TcpStream, conn_tx: Sender<Connection>) {
-    debug!("processing stream from: {:?}", stream.peer_addr());
+    info!("processing stream from: {:?}", stream.peer_addr());
     // 准备接收Response用的channel, 等待客户端接入
     let conn_id = random_string(32);
     let (tx, mut rx) = mpsc::channel(128);
@@ -86,7 +87,7 @@ async fn process(stream: TcpStream, conn_tx: Sender<Connection>) {
         tokio::spawn(transfer(stream, rx_reader, tx_writer).map(|r| {
             debug!("transfer map: {:?}", r);
             if let Err(e) = r {
-                println!("Failed to transfer; error={}", e);
+                error!("Failed to transfer; error={}", e);
             }
         }));
     }
