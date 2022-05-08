@@ -8,7 +8,7 @@ use dashmap::DashSet;
 
 use futures::{Stream, StreamExt};
 use log::debug;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tokio_stream::{wrappers::ReceiverStream};
@@ -113,34 +113,42 @@ impl RSLServer {
         Self { cfg, tx_tcp, tx_http, conns: Default::default(), entrypoints: Default::default() }
     }
 
+    fn build_http_host(&self, oep_set: &MutexGuard<DashSet<String>>, lp: ListenParam) -> Result<String, Status> {
+        let mut subdomain = lp.subdomain;
+        if subdomain.is_empty() {
+            subdomain = random_string(8); // 如果没有指定子域名则随机生成一个
+            // fixme: 又很小几率生成出来的正好已经在使用了，这时会报错。
+            // fixme: 随机生成时应该保证生成的域名可用，不应该报错
+        }
+
+        let key = format!("http://{}.{}", subdomain, self.cfg.http.default_domain).to_lowercase();
+        if oep_set.contains(key.as_str()) {
+            return Err(Status::already_exists("subdomain already exist"));
+        }
+
+        Ok(key.to_string())
+    }
+
+    fn build_tcp_addr(&self, oep_set: &MutexGuard<DashSet<String>>) -> Result<String, Status> {
+        let (min_str, max_str) = self.cfg.core.allow_ports.split_once("-").unwrap();
+        let min: u16 = min_str.parse().unwrap();
+        let max: u16 = max_str.parse().unwrap();
+        for port in min..max {
+            let oep = format!("tcp://0.0.0.0:{}", port);
+            if !oep_set.contains(oep.as_str()) {
+                return Ok(oep);
+            }
+        }
+        // todo 目前仅支持自动生成一个端口，不支持指定端口号。是否有必要向http的subdomain给tcp增加一个remote-port
+
+        Err(Status::internal("none valid tcp port"))
+    }
+
     async fn build_entrypoint(&self, lp: ListenParam) -> Result<String, Status> {
         let oep_set = self.entrypoints.lock().await;
         let oep_result = match Protocol::from_i32(lp.protocol).unwrap() {
-            Protocol::Http => {
-                let mut subdomain = lp.subdomain;
-                if subdomain.is_empty() {
-                    subdomain = random_string(8); // 如果没有指定子域名则随机生成一个
-                }
-
-                let key = format!("http://{}.{}", subdomain, self.cfg.http.default_domain).to_lowercase();
-                if oep_set.contains(key.as_str()) {
-                    return Err(Status::already_exists("open-endpoint already exist"));
-                }
-
-                Ok(key.to_string())
-            }
-            Protocol::Tcp => {
-                let (min_str, max_str) = self.cfg.core.allow_ports.split_once("-").unwrap();
-                let min: u16 = min_str.parse().unwrap();
-                let max: u16 = max_str.parse().unwrap();
-                for port in min..max {
-                    let oep = format!("tcp://0.0.0.0:{}", port);
-                    if !oep_set.contains(oep.as_str()) {
-                        return Ok(oep);
-                    }
-                }
-                Err(Status::internal("none valid tcp port"))
-            }
+            Protocol::Http => self.build_http_host(&oep_set, lp),
+            Protocol::Tcp => self.build_tcp_addr(&oep_set)
         };
 
         if let Ok(key) = oep_result {
