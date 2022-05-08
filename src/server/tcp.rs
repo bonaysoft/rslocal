@@ -1,15 +1,18 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::Arc;
 
 use log::{debug, info};
 use parking_lot::Mutex;
+use futures::FutureExt;
 use tokio::{io, select};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_util::sync::PollSender;
 use url::Url;
-use crate::random_string;
+use crate::{random_string, RxReader, TransferReply, TxWriter};
 use crate::server::{Connection, Payload, XData};
 
 #[derive(Clone)]
@@ -71,61 +74,42 @@ impl TcpServer {
     }
 }
 
-async fn process(mut stream: TcpStream, conn_tx: Sender<Connection>) {
+async fn process(stream: TcpStream, conn_tx: Sender<Connection>) {
     debug!("processing stream from: {:?}", stream.peer_addr());
     // 准备接收Response用的channel, 等待客户端接入
+    let conn_id = random_string(32);
     let (tx, mut rx) = mpsc::channel(128);
-    conn_tx.send(Connection { id: random_string(32), tx }).await.unwrap(); // 通知Connection已就绪
-    while let Some(xd) = rx.recv().await {
-        match xd {
-            XData::TX(tx) => {
-                // 客户端接入成功，开始接收数据并使用tx转发给客户端
-                input_stream_dispatch(&mut stream, tx).await.unwrap();
+    conn_tx.send(Connection { id: conn_id.clone(), tx: tx.clone() }).await.unwrap(); // 通知Connection已就绪
+    if let XData::TX(dtx) = rx.recv().await.unwrap() {
+        let rx_reader = RxReader { rx };
+        let tx_writer = TxWriter { conn_id, tx: PollSender::new(dtx) };
+        tokio::spawn(transfer(stream, rx_reader, tx_writer).map(|r| {
+            debug!("transfer map: {:?}", r);
+            if let Err(e) = r {
+                println!("Failed to transfer; error={}", e);
             }
-            XData::Data(data) => {
-                debug!("received response: {:?}", data.len());
-                if data.eq("EOF".as_bytes()) {
-                    break;
-                }
-                // 接收client发回的数据并Response
-                stream.write_all(&*data).await.unwrap();
-            }
-        }
+        }));
     }
 }
 
-async fn input_stream_dispatch(stream: &mut TcpStream, tx: Sender<Vec<u8>>) -> anyhow::Result<()> {
-    debug!("input_stream_dispatch: {:?}", stream.peer_addr());
-    loop {
-        // Wait for the socket to be readable
-        stream.readable().await?;
-        debug!("start read");
+async fn transfer(mut inbound: TcpStream, mut ro: RxReader<XData>, mut wo: TxWriter<Vec<u8>>) -> Result<(), Box<dyn Error>> {
+    debug!("transfer");
+    let (mut ri, mut wi) = inbound.split();
 
-        // Creating the buffer **after** the `await` prevents it from
-        // being stored in the async task.
-        let mut buf = vec![0u8; 48 * 1024];
+    // 从socket复制到grpc
+    let client_to_server = async {
+        debug!("client_to_server");
+        io::copy(&mut ri, &mut wo).await?;
+        wo.shutdown().await
+    };
 
-        // Try to read data, this may still fail with `WouldBlock`
-        // if the readiness event is a false positive.
-        match stream.try_read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                debug!("read {} bytes", n);
-                tx.send(buf[..n].to_vec()).await.unwrap();
-                if n < 48 * 1024 {
-                    break;
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                debug!("WouldBlock");
-                continue;
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
-    }
+    // 从grpc复制到socket
+    let server_to_client = async {
+        debug!("server_to_client");
+        io::copy(&mut ro, &mut wi).await?;
+        wi.shutdown().await
+    };
 
-    debug!("input_stream_dispatch end");
+    tokio::try_join!(client_to_server, server_to_client)?;
     Ok(())
 }

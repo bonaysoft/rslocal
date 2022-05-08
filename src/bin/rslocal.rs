@@ -1,6 +1,6 @@
-use rslocal::client;
 use clap::{Parser, Subcommand};
-use rslocal::client::api::Protocol;
+use rslocal::client;
+use rslocal::server::api::Protocol;
 
 /// A fictional versioning CLI
 #[derive(Debug, Parser)]

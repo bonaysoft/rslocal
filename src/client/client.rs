@@ -3,13 +3,10 @@ pub mod api {
 }
 
 use std::error::Error;
-use std::future::{Ready};
-use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context, Poll};
 use futures::FutureExt;
 use anyhow::anyhow;
-use futures_core::ready;
 use log::{debug, info};
 use tokio::{io};
 use tokio::net::{TcpStream};
@@ -18,15 +15,16 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::transport::{Channel, Endpoint};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
-use crate::client::client::api::tunnel_client::TunnelClient;
-use crate::client::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
+use crate::server::api::tunnel_client::TunnelClient;
+use crate::server::api::user_client::UserClient;
+use crate::server::api::{LoginBody, LoginReply, TransferBody, TransferReply, ListenParam, Protocol, TStatus};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{PollSender};
 use tonic::codegen::{InterceptedService};
 use tonic::service::Interceptor;
-use crate::client::api::user_client::UserClient;
+use crate::{RxReader, TxWriter};
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -140,20 +138,18 @@ async fn coming_handle(mut client: TunClient, conn_id: String, protocol: Protoco
         }
     });
 
-    let transfer = transfer(inbound_reader, inbound_writer, target).map(|r| {
+    tokio::spawn(transfer_to_target(inbound_reader, inbound_writer, target).map(|r| {
         debug!("transfer map: {:?}", r);
         if let Err(e) = r {
             println!("Failed to transfer; error={}", e);
         }
-    });
-
-    tokio::spawn(transfer);
+    }));
     // if protocol == Protocol::Http {
     //     http_access_log(req_data, resp);
     // }
 }
 
-async fn transfer<'a>(mut ri: RxReader, mut wi: TxWriter, proxy_addr: String) -> Result<(), Box<dyn Error>> {
+async fn transfer_to_target(mut ri: RxReader<TransferReply>, mut wi: TxWriter<TransferBody>, proxy_addr: String) -> Result<(), Box<dyn Error>> {
     debug!("transfer");
     let mut outbound = TcpStream::connect(proxy_addr).await?;
     let (mut ro, mut wo) = outbound.split();
@@ -173,84 +169,6 @@ async fn transfer<'a>(mut ri: RxReader, mut wi: TxWriter, proxy_addr: String) ->
     tokio::try_join!(client_to_server, server_to_client)?;
 
     Ok(())
-}
-
-struct RxReader {
-    rx: Receiver<TransferReply>,
-}
-
-impl AsyncRead for RxReader {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-        debug!(":poll_read");
-
-        match ready!(self.rx.poll_recv(cx)) {
-            None => {}
-            Some(tr) => {
-                debug!("{:?}:poll_recv", tr.conn_id);
-                let data = tr.req_data;
-                debug!(":poll_read_data: {:?}", String::from_utf8_lossy(data.as_slice()));
-                buf.put_slice(data.as_slice());
-            }
-        }
-
-        Poll::Ready(Ok(()))
-    }
-}
-
-struct TxWriter {
-    conn_id: String,
-    tx: PollSender<TransferBody>,
-}
-
-impl AsyncWrite for TxWriter {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
-        debug!("{:?}:poll_write:{}", self.conn_id, buf.len());
-        if buf.len() == 0 {
-            return Poll::Ready(Ok(0));
-        }
-
-        match ready!(self.tx.poll_reserve(cx)) {
-            Ok(_) => {
-                let conn_id = self.conn_id.clone();
-                let result = self.tx.send_item(TransferBody {
-                    conn_id,
-                    status: TStatus::Working as i32,
-                    resp_data: buf.to_vec(),
-                });
-                if let Err(err) = result {
-                    debug!("{:?}:poll_write err: {}", self.conn_id, err.to_string());
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)));
-                }
-            }
-            Err(_) => {}
-        }
-
-        Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        debug!("{:?}:poll_shutdown", self.conn_id);
-        match ready!(self.tx.poll_reserve(cx)) {
-            Ok(_) => {
-                let conn_id = self.conn_id.clone();
-                let result = self.tx.send_item(TransferBody {
-                    conn_id,
-                    status: TStatus::Done as i32,
-                    resp_data: vec![],
-                });
-                if let Err(err) = result {
-                    debug!("{:?}:poll_shutdown err: {}", self.conn_id, err.to_string());
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)));
-                }
-            }
-            Err(_) => {}
-        }
-        Poll::Ready(Ok(()))
-    }
 }
 
 fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {
