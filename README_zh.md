@@ -43,7 +43,7 @@ token = "rslocald_abc32"
 
 ### Deploy
 
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/saltbo/zpan)
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/saltbo/rslocal)
 
 ### Configfile
 
@@ -69,14 +69,15 @@ alice = "rslocald_abc32"
 - [Rust众](https://t.me/rust_zh)
 - [布丁 包](https://github.com/bdbai)
 - [Pop](https://github.com/George-Miao)
+- [Space](https://github.com/spacemeowx2)
 
 ## Contributing
 
 1. write code for the todo and fixme tag
 2. implement the unchecked item of the Project status
 
-[![Stargazers over time](https://starchart.cc/saltbo/rslocal.svg)](https://starchart.cc/saltbo/rslocal)
-
 ## License
 
 rslocal is under the Apache-2.0 license. See the [LICENSE](/LICENSE) file for details.
+
+[![Stargazers over time](https://starchart.cc/saltbo/rslocal.svg)](https://starchart.cc/saltbo/rslocal)

@@ -3,32 +3,68 @@ name: release
 on:
   push:
     tags:
-      - '*'
+      - "v*.*.*"
 
 jobs:
-  goreleaser:
-    runs-on: ubuntu-18.04
+  release:
+    strategy:
+      matrix:
+        build_target: [linux-x86_64, linux-arm64, linux-armhf, macos-x86_64, windows-x86_64]
+        include:
+          - build_target: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - build_target: linux-arm64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - build_target: linux-armhf
+            os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+          - build_target: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - build_target: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Unshallow
-        run: git fetch --prune --unshallow
-      - name: Set up Go
-        uses: actions/setup-go@v2
+      - uses: actions-rs/toolchain@v1
         with:
-          go-version: 1.16.x
-
-      - name: DockerHub Login
-        if: success() && startsWith(github.ref, 'refs/tags/')
-        env:
-          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+          profile: minimal
+      - name: Check out code
+        uses: actions/checkout@v1
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-features --target ${{ matrix.target }}
+      - name: Extract git tag
+        shell: bash
+        run: echo "##[set-output name=tag;]$(echo ${GITHUB_REF#refs/tags/})"
+        id: extract_tag
+      - name: Packaging assets
+        shell: bash
         run: |
-          echo "${DOCKER_HUB_PASSWORD}" | docker login --username saltbo --password-stdin
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v2
+          cd target/${{ matrix.target }}/release
+          case ${{ matrix.target }} in
+          *-pc-windows-*) 
+            7z -y a rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.zip rslocal.exe
+            sha256sum rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.zip > rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.sha256
+            ;;
+          *) 
+            tar czvf rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.tar.gz rslocal
+            shasum -a 256 rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.tar.gz > rslocal-${{ steps.extract_tag.outputs.tag }}-${{ matrix.build_target }}.sha256
+            ;;
+          esac;
+      - name: Releasing assets
+        uses: softprops/action-gh-release@v1
         with:
-          version: latest
-          args: release --rm-dist
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: target/${{ matrix.target }}/release/rslocal-*
