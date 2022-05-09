@@ -1,6 +1,9 @@
+use std::error::Error;
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use rslocal::client;
+use rslocal::client::{ClientError};
 use rslocal::server::api::Protocol;
 
 /// A fictional versioning CLI
@@ -58,14 +61,34 @@ async fn main() -> anyhow::Result<()> {
         Commands::Http { port, subdomain } => {
             let sd = subdomain.unwrap_or_default();
             let target = format!("127.0.0.1:{}", port);
-            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
-            tunnel.start(Protocol::Http, target, sd.as_str()).await
+            build_tunnel(endpoint, token, Protocol::Http, target, sd).await
         }
         Commands::Tcp { port } => {
             let target = format!("127.0.0.1:{}", port);
-            let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
-            tunnel.start(Protocol::Tcp, target, "").await
+            build_tunnel(endpoint, token, Protocol::Tcp, target, String::default()).await
         }
         _ => { Ok(()) }
     }
+}
+
+async fn build_tunnel(endpoint: String, token: String, protocol: Protocol, target: String, subdomain: String) -> anyhow::Result<()> {
+    let tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await;
+    if let Err(ClientError::Connect(err)) = tunnel {
+        return Err(anyhow!("{}", err.source().unwrap().to_string()));
+    }
+
+    let result = tunnel.unwrap().start(protocol, target, subdomain.as_str()).await;
+    if let Err(err) = result {
+        return match err {
+            ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
+            ClientError::Disconnect(_err) => {
+                Err(anyhow!("remote server disconnect"))
+                // todo 增加断线重连机制
+            }
+            ClientError::Status(status) => { Err(anyhow!("{}: {}", status.code(), status.message())) }
+            ClientError::Other(err) => { Err(err) }
+        };
+    }
+
+    anyhow::Ok(result?)
 }

@@ -23,14 +23,12 @@ pub fn load(name: &str) -> anyhow::Result<Config> {
 }
 
 pub fn setup() -> anyhow::Result<()> {
-    let cfg_path = default()?;
-
-    let ep = Text::new("server endpoint?").with_default(DEFAULT_CLOUD_ENDPOINT).prompt()?;
-    let token = Text::new("authorization token?")
-        .with_validator(&|input| { if input.len() == 0 { Err(String::from("token required")) } else { Ok(()) } })
-        .with_help_message("Please your server provider")
-        .prompt()?;
+    let required: StringValidator = &|input| { if input.is_empty() { Err(String::from("value required!")) } else { Ok(()) } };
+    let ep = Text::new("server endpoint?").with_validator(required).prompt()?;
+    let token = Text::new("authorization token?").with_validator(required).prompt()?;
     let cfg_content = format!("endpoint={}\ntoken={}", ep, token);
+
+    let cfg_path = default()?;
     fs::write(&cfg_path, cfg_content)?;
     println!("config saved at {:?}", cfg_path);
     Ok(())

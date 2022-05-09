@@ -67,7 +67,7 @@ pub struct Tunnel {
 
 impl Tunnel {
     // 连接服务器并完成登录
-    pub async fn connect(endpoint: &str, token: &str) -> anyhow::Result<Tunnel> {
+    pub async fn connect(endpoint: &str, token: &str) -> Result<Tunnel, ClientError> {
         let ep = Endpoint::from_str(endpoint)?;
         let channel = ep.connect().await?;
 
@@ -80,23 +80,6 @@ impl Tunnel {
         let interceptor = SessionInterceptor::new(user_info.session_id.clone());
         let client = TunnelClient::with_interceptor(channel, interceptor);
         Ok(Tunnel { client, user_info })
-    }
-
-    pub async fn start(&mut self, protocol: Protocol, target: String, subdomain: &str) -> anyhow::Result<()> {
-        let result = self.build_tunnel(protocol, target, subdomain.to_string()).await;
-        if let Err(err) = result {
-            match err {
-                ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
-                ClientError::Disconnect(_err) => {
-                    Err(anyhow!("remote server disconnect"))
-                    // todo 增加断线重连机制
-                }
-                ClientError::Status(status) => { Err(anyhow!("{}: {}", status.code(), status.message())) }
-                ClientError::Other(err) => { Err(err) }
-            }
-        } else {
-            Ok(())
-        }
     }
 
     async fn build_tunnel(&mut self, protocol: Protocol, target: String, subdomain: String) -> Result<(), ClientError> {
@@ -126,6 +109,10 @@ impl Tunnel {
             }
         }
         Ok(())
+    }
+
+    pub async fn start(&mut self, protocol: Protocol, target: String, subdomain: &str) -> Result<(), ClientError> {
+        self.build_tunnel(protocol, target, subdomain.to_string()).await
     }
 }
 
