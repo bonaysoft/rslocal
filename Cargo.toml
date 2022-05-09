@@ -1,8 +1,12 @@
 [package]
 name = "rslocal"
 version = "1.0.0"
-authors = ["saltbo@foxmail.com"]
 description = "A tunnel to localhost built in Rust"
+repository = "https://github.com/saltbo/rslocal"
+license = "Apache-2.0"
+authors = ["Ambor <saltbo@foxmail.com>"]
+keywords = ["tunnel", "ngrok", "frp"]
+categories = ["command-line-utilities"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
