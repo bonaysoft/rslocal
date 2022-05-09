@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::{env, fs};
+use anyhow::anyhow;
 use config::{ConfigError, Environment, File};
 use serde_derive::Deserialize;
 use log::info;
@@ -28,14 +30,15 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Result<Self, ConfigError> {
-        // let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
-
+    pub fn new(name: &str) -> Result<Self, ConfigError> {
         let s = config::Config::builder()
-            .add_source(File::with_name("/etc/rslocal/rslocald").required(false))
-            .add_source(File::with_name("rslocald").required(false))
-            .add_source(Environment::with_prefix("app"))
+            .add_source(File::with_name("/etc/rslocal/rslocald"))
+            .add_source(File::with_name(name).required(false))
+            .add_source(Environment::with_prefix("rslocal"))
             .build()?;
+        if s.get_bool("core.debug").is_err() {
+            return Err(ConfigError::NotFound("configfile is required".parse().unwrap()));
+        }
 
         // Now that we're done, let's access our configuration
         info!("debug: {:?}", s.get_bool("core.debug"));

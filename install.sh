@@ -32,8 +32,8 @@ curl -J -L "${url}" | tar xz -C "${bin_dir}"
 if [ $? -eq 0 ]; then
   echo "${GREEN}"
   echo "Installation completed successfully."
-  echo "$ rslocal version"
-  "${bin_dir}"/rslocal version
+  echo "$ rslocal --version"
+  "${bin_dir}"/rslocal --version
 else
   echo "${RED}"
   echo "Failed installing rslocal"

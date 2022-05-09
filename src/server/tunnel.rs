@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use anyhow::anyhow;
 use log::{debug, info};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender};
@@ -42,7 +43,7 @@ impl Tunnel {
         });
     }
 
-    pub async fn start(&self) {
+    pub async fn start(&self) -> anyhow::Result<()> {
         let (tx1, mut rx1) = mpsc::channel(128);
         let http_server_inner = self.http_server.inner.clone();
         tokio::spawn(async move {
@@ -60,10 +61,10 @@ impl Tunnel {
         });
 
         self.start_http_svc();
-        self.run_grpc_svc(tx1, tx2).await.unwrap();
+        self.run_grpc_svc(tx1, tx2).await
     }
 
-    async fn run_grpc_svc(&self, tx_http: Sender<Payload>, tx_tcp: Sender<Payload>) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run_grpc_svc(&self, tx_http: Sender<Payload>, tx_tcp: Sender<Payload>) -> anyhow::Result<()> {
         debug!("run_grpc_svc");
         let cfg = self.cfg.clone();
         let addr = cfg.core.bind_addr.parse()?;

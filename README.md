@@ -26,23 +26,24 @@ A client program that runs locally to receive server requests and forward them t
 
 ### Installation
 
-Macos
+MacOS
 
 ```shell
 brew install saltbo/bin/rslocal
 ```
 
-Others
+OtherOS
 
 ```shell
 curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | sh
 ```
 
-### Configfile
+### Usage
 
-```toml
-endpoint = "localtest.rs:8422"
-token = "rslocald_abc32"
+```shell
+rslocal config
+rslocal http 8000
+rslocal tcp 18000
 ```
 
 ## Rslocald
@@ -56,10 +57,14 @@ Visit [localtest.rs](https://localtest.rs)
 ### Self-hosted
 
 ```shell
-docker run -it -p 8422:8422 -p 8423:8423 saltbo/rslocald
+touch /opt/rslocal/rslocald.toml
+#edit your config like example configfile
+docker run -it -p 8422:8422 -p 8423:8423 -v /opt/rslocal:/etc/rslocal saltbo/rslocald
 ```
 
 ### Configfile
+
+This root `rslocald.toml` file is required for `rslocald`.
 
 ```toml
 [core]
@@ -71,7 +76,7 @@ allow_ports = "18000-19000"
 [http]
 bind_addr = "[::1]:8423"
 default_domain = "example.com"
-default_static = "/opt/rslocald/webroot" #未实现
+# default_static = "/opt/rslocald/webroot" # support later
 
 [tokens]
 bob = "rslocald_abc11"

@@ -1,3 +1,4 @@
+pub mod config;
 mod client;
 
-pub use client::*;
+pub use self::client::*;
