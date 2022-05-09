@@ -14,7 +14,7 @@ Rslocal是一个类似ngrok的Rust实现，使用它可以很方便的构建一�
 
 - [x] 支持HTTP协议
 - [x] 支持TCP协议
-- [ ] 支持UTP协议
+- [ ] 支持UDP协议
 - [x] 支持Token登录
 - [ ] 支持OIDC登录
 - [ ] 支持连接断开重连
