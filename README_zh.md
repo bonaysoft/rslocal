@@ -6,11 +6,11 @@
 [![](https://img.shields.io/github/v/release/saltbo/rslocal.svg)](https://github.com/saltbo/rslocal/releases)
 [![](https://img.shields.io/github/license/saltbo/rslocal.svg)](https://github.com/saltbo/rslocal/blob/master/LICENSE)
 
-## What is rslocal?
+## rslocal是什么?
 
 Rslocal是一个类似ngrok的Rust实现，使用它可以很方便的构建一条内网穿透隧道。
 
-## Project status
+## 项目状态
 
 - [x] 支持HTTP协议
 - [x] 支持TCP协议
@@ -24,13 +24,21 @@ Rslocal是一个类似ngrok的Rust实现，使用它可以很方便的构建一�
 
 运行在本地的客户端程序，用于接收服务器请求并转发给本地的服务
 
-### Setup
+### 安装
+
+Mac用户
+
+```shell
+brew install saltbo/bin/rslocal
+```
+
+其他用户（该脚本暂不支持Windows，需要[手动下载](https://github.com/saltbo/rslocal/releases)）
 
 ```shell
 curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | sh
 ```
 
-### Configfile
+### 客户端配置文件样例
 
 ```toml
 endpoint = "localtest.rs:8422"
@@ -41,11 +49,17 @@ token = "rslocald_abc32"
 
 服务端程序，用于接收外部请求并转发给rslocal
 
-### Deploy
+### 云服务
 
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/saltbo/rslocal)
+访问 [localtest.rs](https://localtest.rs) 了解详情
 
-### Configfile
+### 自建服务
+
+```shell
+docker run -it -p 8422:8422 -p 8423:8423 saltbo/rslocald
+```
+
+### 服务端配置文件样例
 
 ```toml
 [core]
@@ -64,19 +78,19 @@ bob = "rslocald_abc11"
 alice = "rslocald_abc32"
 ```
 
-## Special thanks
+## 参与贡献
+
+1. 搜索代码中的todo和fixme标记，解决它
+2. 实现项目状态中没有打钩的选项
+
+## 特别感谢
 
 - [Rust众](https://t.me/rust_zh)
 - [布丁 包](https://github.com/bdbai)
 - [Pop](https://github.com/George-Miao)
 - [Space](https://github.com/spacemeowx2)
 
-## Contributing
-
-1. write code for the todo and fixme tag
-2. implement the unchecked item of the Project status
-
-## License
+## 开源协议
 
 rslocal is under the Apache-2.0 license. See the [LICENSE](/LICENSE) file for details.
 

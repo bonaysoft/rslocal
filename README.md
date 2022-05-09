@@ -24,7 +24,15 @@ Rslocal is like ngrok built in Rust, it builds a tunnel to localhost.
 
 A client program that runs locally to receive server requests and forward them to local services
 
-### Setup
+### Installation
+
+Macos
+
+```shell
+brew install saltbo/bin/rslocal
+```
+
+Others
 
 ```shell
 curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | sh
@@ -41,9 +49,15 @@ token = "rslocald_abc32"
 
 Server program that receives external requests and forwards them to `rslocal`
 
-### Deploy
+### Cloud-service
 
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/saltbo/rslocal)
+Visit [localtest.rs](https://localtest.rs)
+
+### Self-hosted
+
+```shell
+docker run -it -p 8422:8422 -p 8423:8423 saltbo/rslocald
+```
 
 ### Configfile
 
@@ -64,17 +78,17 @@ bob = "rslocald_abc11"
 alice = "rslocald_abc32"
 ```
 
+## Contributing
+
+1. write code for the todo and fixme tag
+2. implement the unchecked item of the Project status
+
 ## Special thanks
 
 - [rust_zh](https://t.me/rust_zh)
 - [bdbai](https://github.com/bdbai)
 - [spacemeowx2](https://github.com/spacemeowx2)
 - [Pop](https://t.me/Pop_gg)
-
-## Contributing
-
-1. write code for the todo and fixme tag
-2. implement the unchecked item of the Project status
 
 ## License
 
