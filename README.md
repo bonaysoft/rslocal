@@ -99,7 +99,7 @@ alice = "rslocald_abc32"
 - [rust_zh](https://t.me/rust_zh)
 - [bdbai](https://github.com/bdbai)
 - [spacemeowx2](https://github.com/spacemeowx2)
-- [Pop](https://t.me/Pop_gg)
+- [Pop](https://github.com/George-Miao)
 
 ## License
 
