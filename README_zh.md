@@ -3,8 +3,9 @@
 [English](README.md) | [中文](README_zh.md)
 
 [![](https://github.com/saltbo/rslocal/workflows/build/badge.svg)](https://github.com/saltbo/rslocal/actions?query=workflow%3Abuild)
-[![](https://img.shields.io/github/v/release/saltbo/rslocal.svg)](https://github.com/saltbo/rslocal/releases)
-[![](https://img.shields.io/github/license/saltbo/rslocal.svg)](https://github.com/saltbo/rslocal/blob/master/LICENSE)
+[![](https://img.shields.io/crates/v/rslocal.svg?color=orange)](https://crates.io/crates/rslocal)
+[![](https://img.shields.io/github/v/release/saltbo/rslocal.svg?color=brightgreen)](https://github.com/saltbo/rslocal/releases)
+[![](https://img.shields.io/github/license/saltbo/rslocal?color=blue)](https://github.com/saltbo/rslocal/blob/master/LICENSE)
 
 ## rslocal是什么?
 
