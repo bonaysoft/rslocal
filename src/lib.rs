@@ -48,7 +48,7 @@ impl AsyncRead for RxReader<TransferReply> {
 impl AsyncWrite for TxWriter<TransferBody> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
         debug!("{:?}:poll_write:{}", self.conn_id, buf.len());
-        if buf.len() == 0 {
+        if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
 
@@ -118,7 +118,7 @@ impl AsyncRead for RxReader<XData> {
 impl AsyncWrite for TxWriter<Vec<u8>> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
         debug!("{:?}:poll_write:{}", self.conn_id, buf.len());
-        if buf.len() == 0 {
+        if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
 

@@ -87,7 +87,7 @@ impl Tunnel {
         if let Err(err) = result {
             match err {
                 ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
-                ClientError::Disconnect(err) => {
+                ClientError::Disconnect(_err) => {
                     Err(anyhow!("remote server disconnect"))
                     // todo 增加断线重连机制
                 }
@@ -132,7 +132,7 @@ impl Tunnel {
 type TunClient = TunnelClient<InterceptedService<Channel, SessionInterceptor>>;
 
 // 这个函数里处理的是一次完整请求
-async fn coming_handle(mut client: TunClient, conn_id: String, protocol: Protocol, target: String) {
+async fn coming_handle(mut client: TunClient, conn_id: String, _protocol: Protocol, target: String) {
     let (tx, rx) = mpsc::channel(128);
     tx.send(TransferBody { conn_id: conn_id.clone(), status: TStatus::Ready as i32, resp_data: vec![] }).await.unwrap(); // 通过conn_id连入服务端
 
@@ -181,7 +181,7 @@ async fn transfer_to_target(mut ri: RxReader<TransferReply>, mut wi: TxWriter<Tr
     Ok(())
 }
 
-fn http_access_log(req_bytes: Vec<u8>, resp: Vec<u8>) {
+fn http_access_log(_req_bytes: Vec<u8>, resp: Vec<u8>) {
     let resp_length = resp.len();
     let mut header_length = 1024;
     if resp_length < header_length {

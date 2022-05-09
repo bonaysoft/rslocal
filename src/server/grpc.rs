@@ -55,7 +55,7 @@ impl RSLUser {
     }
     fn token2username(&self, token: String) -> Result<String, Status> {
         let cfg = self.cfg.clone();
-        if cfg.core.auth_method == AUTH_METHOD_OIDC.to_string() {
+        if cfg.core.auth_method == *AUTH_METHOD_OIDC {
             // todo implement oidc auth
             return Err(Status::invalid_argument("oidc not implement"));
         }
@@ -124,11 +124,11 @@ impl RSLServer {
             return Err(Status::already_exists("subdomain already exist"));
         }
 
-        Ok(key.to_string())
+        Ok(key)
     }
 
     fn build_tcp_addr(&self, oep_set: &MutexGuard<DashSet<String>>) -> Result<String, Status> {
-        let (min_str, max_str) = self.cfg.core.allow_ports.split_once("-").unwrap();
+        let (min_str, max_str) = self.cfg.core.allow_ports.split_once('-').unwrap();
         let min: u16 = min_str.parse().unwrap();
         let max: u16 = max_str.parse().unwrap();
         for port in min..max {

@@ -23,7 +23,7 @@ struct Cli {
 enum Commands {
     /// start an HTTP tunnel
     #[clap(arg_required_else_help = true)]
-    HTTP {
+    Http {
         /// The local port to be exposed
         port: String,
         #[clap(short, long)]
@@ -31,7 +31,7 @@ enum Commands {
     },
     /// start a TCP tunnel
     #[clap(arg_required_else_help = true)]
-    TCP {
+    Tcp {
         /// The local port to be exposed
         port: String,
     },
@@ -50,13 +50,13 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = cfg.get_string("endpoint").unwrap();
     let token = cfg.get_string("token").unwrap();
     match args.command {
-        Commands::HTTP { port, subdomain } => {
+        Commands::Http { port, subdomain } => {
             let sd = subdomain.unwrap_or_default();
             let target = format!("127.0.0.1:{}", port);
             let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
             tunnel.start(Protocol::Http, target, sd.as_str()).await
         }
-        Commands::TCP { port } => {
+        Commands::Tcp { port } => {
             let target = format!("127.0.0.1:{}", port);
             let mut tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await?;
             tunnel.start(Protocol::Tcp, target, "").await

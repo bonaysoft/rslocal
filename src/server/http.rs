@@ -46,7 +46,7 @@ impl Service<Request<Body>> for HttpServer {
         let inner = Arc::clone(&self.inner);
         let method = req.method().clone();
         let uri = req.uri().clone();
-        let version = req.version().clone();
+        let version = req.version();
         let res = async move {
             let resp = inner.lock().await.proxy(req).await.unwrap();
             // 输出访问日志
@@ -172,7 +172,7 @@ impl HttpServerInner {
     }
 
     fn init_builder_from_headers(header: Vec<u8>) -> Builder {
-        debug!("raw_headers:{:?}", String::from_utf8_lossy(header.clone().as_slice()));
+        debug!("raw_headers:{:?}", String::from_utf8_lossy(header.as_slice()));
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut resp = httparse::Response::new(&mut headers);
         resp.parse(header.as_slice()).unwrap();

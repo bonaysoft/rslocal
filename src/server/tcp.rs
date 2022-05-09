@@ -71,7 +71,7 @@ impl TcpServer {
         let mut mg = self.listeners.lock();
         let tx = mg.remove(addr.as_str()).unwrap();
         tx.send(()).unwrap();
-        info!("tcp server {} closed.", addr.clone());
+        info!("tcp server {} closed.", addr);
     }
 }
 
