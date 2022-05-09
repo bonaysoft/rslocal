@@ -57,9 +57,12 @@ Visit [localtest.rs](https://localtest.rs)
 ### Self-hosted
 
 ```shell
-touch /opt/rslocal/rslocald.toml
+mkdir /etc/rslocal
+touch /etc/rslocal/rslocald.toml
 #edit your config like example configfile
+
 docker run -it -p 8422:8422 -p 8423:8423 -v /opt/rslocal:/etc/rslocal saltbo/rslocald
+docker run -it -p 8422:8422 -p 8423:8423 -v /etc/rslocal:/etc/rslocal saltbo/rslocald
 ```
 
 ### Configfile
@@ -69,12 +72,12 @@ This root `rslocald.toml` file is required for `rslocald`.
 ```toml
 [core]
 debug = false
-bind_addr = "[::1]:8422"
+bind_addr = "0.0.0.0:8422"
 auth_method = "token"  # token, oidc
 allow_ports = "18000-19000"
 
 [http]
-bind_addr = "[::1]:8423"
+bind_addr = "0.0.0.0:8423"
 default_domain = "example.com"
 # default_static = "/opt/rslocald/webroot" # support later
 
