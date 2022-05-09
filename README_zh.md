@@ -38,11 +38,12 @@ brew install saltbo/bin/rslocal
 curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | sh
 ```
 
-### 客户端配置文件样例
+### 使用
 
-```toml
-endpoint = "localtest.rs:8422"
-token = "rslocald_abc32"
+```shell
+rslocal config
+rslocal http 8000
+rslocal tcp 18000
 ```
 
 ## Rslocald
@@ -56,26 +57,34 @@ token = "rslocald_abc32"
 ### 自建服务
 
 ```shell
-docker run -it -p 8422:8422 -p 8423:8423 saltbo/rslocald
+mkdir /etc/rslocal
+touch /etc/rslocal/rslocald.toml
+#edit your config like example configfile
+docker run -it -p 8422:8422 -p 8423:8423 -v /etc/rslocal:/etc/rslocal saltbo/rslocald
 ```
 
 ### 服务端配置文件样例
 
 ```toml
 [core]
+[core]
 debug = false
-bind_addr = "[::1]:8422"
+bind_addr = "0.0.0.0:8422"
 auth_method = "token"  # token, oidc
 allow_ports = "18000-19000"
 
 [http]
-bind_addr = "[::1]:8423"
-default_domain = "example.com"
-default_static = "/opt/rslocald/webroot" #未实现
+bind_addr = "0.0.0.0:8423"
+default_domain = "localtest.me:8423"
+#default_static = "/etc/rslocal/webroot"
 
 [tokens]
 bob = "rslocald_abc11"
 alice = "rslocald_abc32"
+
+#[oidc]
+#issuer = ""
+#audience = ""
 ```
 
 ## 参与贡献

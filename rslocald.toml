@@ -1,13 +1,13 @@
 [core]
 debug = false
-bind_addr = "[::1]:8422"
+bind_addr = "0.0.0.0:8422"
 auth_method = "token"  # token, oidc
 allow_ports = "18000-19000"
 
 [http]
-bind_addr = "[::1]:8423"
+bind_addr = "0.0.0.0:8423"
 default_domain = "localtest.me:8423"
-default_static = "/opt/rslocald/webroot"
+#default_static = "/etc/rslocal/webroot"
 
 [tokens]
 bob = "rslocald_abc11"

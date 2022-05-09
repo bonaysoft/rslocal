@@ -32,7 +32,7 @@ MacOS
 brew install saltbo/bin/rslocal
 ```
 
-OtherOS
+OtherOS (Does not support Windows for the time being. You need to [download it manually](https://github.com/saltbo/rslocal/releases).)
 
 ```shell
 curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | sh
@@ -61,13 +61,12 @@ mkdir /etc/rslocal
 touch /etc/rslocal/rslocald.toml
 #edit your config like example configfile
 
-docker run -it -p 8422:8422 -p 8423:8423 -v /opt/rslocal:/etc/rslocal saltbo/rslocald
 docker run -it -p 8422:8422 -p 8423:8423 -v /etc/rslocal:/etc/rslocal saltbo/rslocald
 ```
 
 ### Configfile
 
-This root `rslocald.toml` file is required for `rslocald`.
+The `rslocald.toml` file is required for `rslocald`.
 
 ```toml
 [core]
@@ -79,11 +78,15 @@ allow_ports = "18000-19000"
 [http]
 bind_addr = "0.0.0.0:8423"
 default_domain = "example.com"
-# default_static = "/opt/rslocald/webroot" # support later
+# default_static = "/etc/rslocal/webroot" # support later
 
 [tokens]
 bob = "rslocald_abc11"
 alice = "rslocald_abc32"
+
+#[oidc]
+#issuer = ""
+#audience = ""
 ```
 
 ## Contributing
