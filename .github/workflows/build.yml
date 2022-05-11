@@ -13,15 +13,15 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            exe: rslocal
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            exe: rslocal.exe
           - os: macos-latest
             target: x86_64-apple-darwin
             exe: rslocal
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            exe: rslocal
+#          - os: windows-latest
+#            target: x86_64-pc-windows-msvc
+#            exe: rslocal.exe
     steps:
       - name: Check out code
         uses: actions/checkout@v1
