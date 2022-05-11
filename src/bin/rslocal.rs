@@ -72,12 +72,11 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn build_tunnel(endpoint: String, token: String, protocol: Protocol, target: String, subdomain: String) -> anyhow::Result<()> {
-    let tunnel = client::Tunnel::connect(endpoint.as_str(), token.as_str()).await;
-    if let Err(ClientError::Connect(err)) = tunnel {
-        return Err(anyhow!("{}", err.source().unwrap().to_string()));
-    }
+    let mut tunnel = wrapper(client::Tunnel::connect(endpoint.as_str(), token.as_str()).await)?;
+    wrapper(tunnel.start(protocol, target, subdomain.as_str()).await)
+}
 
-    let result = tunnel.unwrap().start(protocol, target, subdomain.as_str()).await;
+fn wrapper<T>(result: Result<T, ClientError>) -> anyhow::Result<T> {
     if let Err(err) = result {
         return match err {
             ClientError::Connect(err) => { Err(anyhow!("{}", err.source().unwrap().to_string())) }
