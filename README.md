@@ -40,11 +40,33 @@ curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | s
 ```
 
 ### Usage
-
+setup config
 ```shell
-rslocal config
-rslocal http 8000
-rslocal tcp 18000
+➜  ~ rslocal config
+? server endpoint? http://rs.localtest.rs:8422
+? authorization token? rslocal666
+config saved at "/Users/saltbo/.config/rslocal/config.ini"
+```
+
+expose http server
+```shell
+➜  ~ rslocal http 8000
+Username: lily
+Forwarding: http://py1cn3aa.localtest.rs => 127.0.0.1:8000
+```
+
+expose http server with subdomain
+```shell
+➜  ~ rslocal http 8000 --subdomain test
+Username: lily
+Forwarding: http://test.localtest.rs => 127.0.0.1:8000
+```
+
+expose tcp server
+```shell
+➜  ~ rslocal tcp 8000
+Username: lily
+Forwarding: tcp://0.0.0.0:18000 => 127.0.0.1:8000
 ```
 
 ## Rslocald
