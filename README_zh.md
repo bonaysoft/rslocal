@@ -41,34 +41,11 @@ curl -sSf https://raw.githubusercontent.com/saltbo/rslocal/master/install.sh | s
 
 ### 使用
 
-配置
 ```shell
-➜  ~ rslocal config
-? server endpoint? http://rs.localtest.rs:8422
-? authorization token? rslocal666
-config saved at "/Users/saltbo/.config/rslocal/config.ini"
-```
-
-暴露http服务
-```shell
-➜  ~ rslocal http 8000
-Username: lily
-Forwarding: http://py1cn3aa.localtest.rs => 127.0.0.1:8000
-```
-
-指定子域名
-```shell
-➜  ~ rslocal http 8000 --subdomain test
-Username: lily
-Forwarding: http://test.localtest.rs => 127.0.0.1:8000
-```
-
-暴露TCP服务，暂时无法指定子域名，系统自动分配端口。
-
-```shell
-➜  ~ rslocal tcp 8000
-Username: lily
-Forwarding: tcp://0.0.0.0:18000 => 127.0.0.1:8000
+rslocal config
+rslocal http 8000
+rslocal http 8000 --subdomain test
+rslocal tcp 8000
 ```
 
 ## Rslocald
